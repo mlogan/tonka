@@ -383,7 +383,7 @@ cmd_new() {
 
     log_info "Starting Claude in $project_name..."
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
-        "cd ~/projects/$project_name && \$SHELL -l -c '~/.local/bin/claude --dangerously-skip-permissions; echo "Claude exited. You are still in the tonka VM. Press Ctrl-D to leave."; exec \$SHELL -l'"
+        "cd ~/projects/$project_name && bash -i -l -c 'set -m; ~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec bash -l'"
 }
 
 cmd_start() {
@@ -463,7 +463,7 @@ cmd_cl() {
 
     log_info "Starting Claude in $project_name..."
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
-        "cd ~/projects/$project_name && \$SHELL -l -c '~/.local/bin/claude --dangerously-skip-permissions; echo "Claude exited. You are still in the tonka VM. Press Ctrl-D to leave."; exec \$SHELL -l'"
+        "cd ~/projects/$project_name && bash -i -l -c 'set -m; ~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec bash -l'"
 }
 
 cmd_rebuild_base() {
