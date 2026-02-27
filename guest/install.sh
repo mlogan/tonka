@@ -33,14 +33,14 @@ echo "tonka ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/tonka
 
 # Install Homebrew as tonka user
 echo "Installing Homebrew..."
-sudo -u tonka /bin/bash -c 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+sudo -u tonka -H /bin/bash -c 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
 
 # Add brew to path for subsequent commands
 export PATH="/opt/homebrew/bin:$PATH"
 
 # Install essential tools via brew (minimal set - dotfiles can add more)
 echo "Installing development tools..."
-sudo -u tonka /opt/homebrew/bin/brew install git gh
+sudo -u tonka -H /opt/homebrew/bin/brew install git gh
 
 # Enable Remote Login (SSH)
 echo "Enabling SSH..."
@@ -49,10 +49,10 @@ sudo systemsetup -setremotelogin on
 # Clone and run dotfiles if specified
 if [[ -n "$DOTFILES_REPO" ]]; then
     echo "Setting up dotfiles from: $DOTFILES_REPO"
-    sudo -u tonka git clone "$DOTFILES_REPO" /Users/tonka/.dotfiles
+    sudo -u tonka -H git clone "$DOTFILES_REPO" /Users/tonka/.dotfiles
     if [[ -f /Users/tonka/.dotfiles/setup.sh ]]; then
         echo "Running dotfiles setup.sh..."
-        sudo -u tonka /bin/bash -c 'cd ~/.dotfiles && ./setup.sh'
+        sudo -u tonka -H /bin/bash -c 'cd ~/.dotfiles && ./setup.sh'
     else
         echo "Warning: No setup.sh found in dotfiles repo"
     fi
