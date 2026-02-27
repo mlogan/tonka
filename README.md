@@ -34,30 +34,35 @@ Or set the environment variable:
 export TONKA_DOTFILES_REPO="git@github.com:yourusername/dotfiles.git"
 ```
 
-Your dotfiles repo must have a `setup.sh` script at the root that installs Claude Code and any other tools you need.
+Your dotfiles repo should have a `setup.sh` script at the root that sets up your shell, editor, etc.
 
 ## Usage
 
 ```bash
-# Create new project sandbox from a local git repo
-tonka new ~/dev/myproject
+# Add a repo to the VM
+tonka new-repo ~/dev/myproject
 
-# Create with explicit name
-tonka new ~/dev/myproject myproject-feature
+# Create a project worktree and launch Claude
+tonka new my-feature myproject
 
-# Start/stop/delete
-tonka start myproject
-tonka stop myproject
-tonka delete myproject
+# Launch Claude in a project (or select from list)
+tonka
+tonka cl my-feature
 
-# Connect
-tonka shell myproject     # SSH into VM
-tonka claude myproject    # Run Claude in project directory
+# SSH into a project
+tonka sh my-feature
 
-# List projects
+# Start/stop VM
+tonka start
+tonka stop
+
+# List repos and projects
 tonka list
 
-# Rebuild base VM (after dotfiles changes)
+# Clean up merged worktrees
+tonka cleanup
+
+# Rebuild base VM (after config changes)
 tonka rebuild-base
 ```
 
@@ -73,5 +78,6 @@ Config file: `~/.tonka.conf` (sourced as shell script)
 
 Variables (can be set in config file or environment):
 - `TONKA_BASE_IMAGE` - Tart image to use for base VM (default: `ghcr.io/cirruslabs/macos-tahoe-xcode:latest`)
-- `TONKA_DOTFILES_REPO` - Git URL of your dotfiles repo (must have `setup.sh` at root)
+- `TONKA_DOTFILES_REPO` - Git URL of your dotfiles repo (should have `setup.sh` at root)
+- `TONKA_TOOLS` - Space-separated list of tools to install: `rust`, `go`, `nodejs`, `python`
 - `GITHUB_TOKEN` - Passed to VM for GitHub CLI authentication (auto-detected from `gh auth token` if not set)
