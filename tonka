@@ -182,6 +182,12 @@ sync_claude_settings() {
         fi
     fi
 
+    # Ensure git uses gh credential helper
+    if ! ssh $ssh_opts "$TART_USER@$ip" "git config --get credential.helper | grep -q gh"; then
+        log_info "Configuring git to use gh credential helper..."
+        ssh $ssh_opts "$TART_USER@$ip" "/opt/homebrew/bin/gh auth setup-git"
+    fi
+
     # Install plugins if not already installed
     if [[ -f "$HOME/.claude/plugins/installed_plugins.json" ]]; then
         local plugins
