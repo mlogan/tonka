@@ -195,12 +195,9 @@ sync_claude_settings() {
         done
     fi
 
-    # Sync ~/.claude.json if changed (has hasCompletedOnboarding etc)
+    # Copy ~/.claude.json only if it doesn't exist (for initial onboarding state)
     if [[ -f "$HOME/.claude.json" ]]; then
-        local local_hash remote_hash
-        local_hash=$(md5 -q "$HOME/.claude.json")
-        remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q ~/.claude.json 2>/dev/null" || echo "")
-        if [[ "$local_hash" != "$remote_hash" ]]; then
+        if ! ssh $ssh_opts "$TART_USER@$ip" "test -f ~/.claude.json" 2>/dev/null; then
             scp $ssh_opts "$HOME/.claude.json" "$TART_USER@$ip":~/.claude.json
             changed=true
         fi
