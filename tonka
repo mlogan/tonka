@@ -182,6 +182,18 @@ sync_claude_settings() {
         fi
     fi
 
+    # Sync gh credentials if changed
+    if [[ -f "$HOME/.config/gh/hosts.yml" ]]; then
+        local local_hash remote_hash
+        local_hash=$(md5 -q "$HOME/.config/gh/hosts.yml")
+        remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q ~/.config/gh/hosts.yml 2>/dev/null" || echo "")
+        if [[ "$local_hash" != "$remote_hash" ]]; then
+            ssh $ssh_opts "$TART_USER@$ip" "mkdir -p ~/.config/gh"
+            scp $ssh_opts "$HOME/.config/gh/hosts.yml" "$TART_USER@$ip":~/.config/gh/hosts.yml
+            changed=true
+        fi
+    fi
+
     # Install plugins if not already installed
     if [[ -f "$HOME/.claude/plugins/installed_plugins.json" ]]; then
         local plugins
