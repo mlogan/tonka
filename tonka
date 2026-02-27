@@ -189,7 +189,10 @@ sync_claude_settings() {
 
         # Ensure official marketplace is added
         if [[ -n "$plugins" ]]; then
-            ssh $ssh_opts "$TART_USER@$ip" "~/.local/bin/claude plugin marketplace add anthropics/claude-plugins-official 2>/dev/null" || true
+            if ! ssh $ssh_opts "$TART_USER@$ip" "grep -q claude-plugins-official ~/.claude/plugins/known_marketplaces.json 2>/dev/null"; then
+                log_info "Adding official plugin marketplace..."
+                ssh $ssh_opts "$TART_USER@$ip" "~/.local/bin/claude plugin marketplace add anthropics/claude-plugins-official" || true
+            fi
         fi
 
         for plugin in $plugins; do
