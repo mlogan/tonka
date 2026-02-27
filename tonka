@@ -55,6 +55,7 @@ Commands:
   new-repo <repo-path>      Clone a git repo into the VM
   new <project> [repo]      Create a project worktree from a repo
   pr <pr#> [repo]           Checkout a PR (creates project or opens existing)
+  cp <src> [dest]           Copy a local file/directory into the VM (dest defaults to ~)
   sh [project]              SSH into VM (optionally into a project)
   cl <project>              Run Claude in a project
   start                     Start the tonka VM
@@ -67,6 +68,7 @@ Examples:
   tonka new-repo ~/dev/myproject
   tonka new feature-branch myproject
   tonka pr 123
+  tonka cp ~/myfile.txt ~/projects/myproject/
   tonka sh feature-branch
   tonka cl feature-branch
 EOF
@@ -482,6 +484,27 @@ cmd_pr() {
         "cd ~/projects/$branch_name && \$SHELL -i -l -c '~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec \$SHELL -l'"
 }
 
+cmd_cp() {
+    local src="${1:-}"
+    local dest="${2:-}"
+
+    if [[ -z "$src" ]]; then
+        die "Usage: tonka cp <src> [dest]"
+    fi
+
+    if [[ ! -e "$src" ]]; then
+        die "Source path does not exist: $src"
+    fi
+
+    ensure_vm
+    local ip
+    ip=$(get_vm_ip "$VM_NAME")
+
+    log_info "Copying $src to VM:${dest:-~}..."
+    scp -r -o StrictHostKeyChecking=no -i "$SSH_KEY" "$src" "$TART_USER@$ip:$dest"
+    log_info "Done."
+}
+
 cmd_start() {
     ensure_vm
 }
@@ -650,6 +673,10 @@ main() {
         pr)
             shift
             cmd_pr "$@"
+            ;;
+        cp)
+            shift
+            cmd_cp "$@"
             ;;
         start)
             cmd_start
