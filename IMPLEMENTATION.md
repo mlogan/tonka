@@ -11,15 +11,15 @@
 
 ## Phase 2: Project Management
 
-- [ ] Implement `tonka new <repo-path> [project-name]`
-- [ ] Implement `tonka start/stop/delete <project>`
-- [ ] Implement `tonka list`
-- [ ] Implement `tonka shell/claude <project>`
+- [x] Implement `tonka new <repo-path> [project-name]`
+- [x] Implement `tonka start/stop/delete <project>`
+- [x] Implement `tonka list`
+- [x] Implement `tonka shell/claude <project>`
 
 ## Phase 3: Polish
 
-- [ ] GitHub token handling
-- [ ] SSH key management
+- [x] GitHub token handling (via GITHUB_TOKEN env var)
+- [x] SSH key management (auto-generated ~/.ssh/id_ed25519_tonka)
 
 ## Verification
 
