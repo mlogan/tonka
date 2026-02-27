@@ -195,10 +195,10 @@ sync_claude_settings() {
         fi
     fi
 
-    # Ensure git uses gh credential helper
-    if ! ssh $ssh_opts "$TART_USER@$ip" "git config --global credential.helper | grep -q gh"; then
+    # Ensure git uses gh credential helper (clear xcode's osxkeychain first)
+    if ! ssh $ssh_opts "$TART_USER@$ip" "git config --global --get credential.helper | grep -q 'gh auth'"; then
         log_info "Configuring git to use gh credential helper..."
-        ssh $ssh_opts "$TART_USER@$ip" "git config --global credential.helper '/opt/homebrew/bin/gh auth git-credential'"
+        ssh $ssh_opts "$TART_USER@$ip" 'git config --global --unset-all credential.helper 2>/dev/null; git config --global credential.helper ""; git config --global --add credential.helper "!/opt/homebrew/bin/gh auth git-credential"'
     fi
 
     # Install plugins if not already installed
