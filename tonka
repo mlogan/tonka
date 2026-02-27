@@ -186,6 +186,12 @@ sync_claude_settings() {
     if [[ -f "$HOME/.claude/plugins/installed_plugins.json" ]]; then
         local plugins
         plugins=$(jq -r '.plugins | keys[]' "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null || echo "")
+
+        # Ensure official marketplace is added
+        if [[ -n "$plugins" ]]; then
+            ssh $ssh_opts "$TART_USER@$ip" "~/.local/bin/claude plugin marketplace add anthropics/claude-plugins-official 2>/dev/null" || true
+        fi
+
         for plugin in $plugins; do
             if ! ssh $ssh_opts "$TART_USER@$ip" "grep -q '$plugin' ~/.claude/plugins/installed_plugins.json 2>/dev/null"; then
                 log_info "Installing plugin: $plugin"
