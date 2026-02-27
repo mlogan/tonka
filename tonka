@@ -185,7 +185,7 @@ sync_claude_settings() {
     # Ensure git uses gh credential helper
     if ! ssh $ssh_opts "$TART_USER@$ip" "git config --global credential.helper | grep -q gh"; then
         log_info "Configuring git to use gh credential helper..."
-        ssh $ssh_opts "$TART_USER@$ip" "git config --global credential.helper '!/opt/homebrew/bin/gh auth git-credential'"
+        ssh $ssh_opts "$TART_USER@$ip" 'git config --global credential.helper "!/opt/homebrew/bin/gh auth git-credential"'
     fi
 
     # Install plugins if not already installed
