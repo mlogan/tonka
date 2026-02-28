@@ -523,7 +523,7 @@ cmd_sync() {
 
     log_info "Fetching branches from VM repo '$repo_name'..."
     GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -i $SSH_KEY" \
-        git -C "$repo_root" fetch "$TART_USER@$ip:repos/$repo_name" 'refs/heads/*:refs/remotes/tonka/*'
+        git -C "$repo_root" fetch "$TART_USER@$ip:repos/$repo_name" '+refs/heads/*:refs/remotes/tonka/*'
     log_info "Done. Branches available as tonka/<branch>"
 }
 
