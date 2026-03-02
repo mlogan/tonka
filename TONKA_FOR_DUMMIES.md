@@ -59,6 +59,7 @@ Create a configuration file at `~/.tonka.conf`:
 
 ```bash
 # Required if you want dotfiles installed in the VM
+# Both SSH and HTTPS URLs work — SSH URLs are auto-converted to HTTPS for cloning
 TONKA_DOTFILES_REPO="git@github.com:yourusername/dotfiles.git"
 
 # Optional: language toolchains to install inside the VM
@@ -116,9 +117,9 @@ This takes a while (downloading a macOS image, installing Homebrew, etc.). Here'
 3. **Installs Homebrew** and every formula/cask you have installed on your host Mac
 4. **Installs language toolchains** from `TONKA_TOOLS` (if configured)
 5. **Installs the Claude CLI** (`~/.local/bin/claude`)
-6. **Clones your dotfiles** to `~/.dotfiles` and runs `setup.sh` (if `TONKA_DOTFILES_REPO` is set)
+6. **Copies your Claude settings** (settings.json, skills) into the VM
 7. **Configures GitHub auth** using your `gh` token so `git clone/push` work inside the VM
-8. **Copies your Claude settings** (settings.json, skills) into the VM
+8. **Clones your dotfiles** to `~/.dotfiles` and runs `setup.sh` (if `TONKA_DOTFILES_REPO` is set) — SSH URLs are automatically converted to HTTPS so cloning uses the `gh` credential helper instead of SSH keys
 9. **Shuts down** — the base VM is now a frozen template
 
 You only need to run `rebuild-base` once, or when you change your config.
