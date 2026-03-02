@@ -466,7 +466,7 @@ cmd_pr() {
     # Check if any worktree has this branch checked out
     local worktree_path
     worktree_path=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-        "cd ~/repos/$repo_name && git worktree list --porcelain | grep -B1 'branch refs/heads/$branch_name' | head -1 | sed 's/^worktree //'") || true
+        "cd ~/repos/$repo_name && git worktree list --porcelain | grep -B2 'branch refs/heads/$branch_name' | head -1 | sed 's/^worktree //'") || true
 
     if [[ -n "$worktree_path" ]]; then
         log_info "Found existing project at $worktree_path. Starting Claude..."
