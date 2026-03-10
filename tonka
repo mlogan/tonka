@@ -62,6 +62,7 @@ Commands:
   cursor <project>          Open project in Cursor/VS Code via SSH
   diff <project>            Sync and diff project against origin/main
   difftool <project>        Sync and open difftool for project against origin/main
+  rm <project>              Remove a project (worktree) from the VM
   start                     Start the tonka VM
   stop                      Stop the tonka VM
   list                      List repos and projects
@@ -756,6 +757,54 @@ cmd_difftool() {
     cmd_diff_helper difftool "$@"
 }
 
+cmd_rm() {
+    local project_name="${1:-}"
+    if [[ -z "$project_name" ]]; then
+        die "Usage: tonka rm <project>"
+    fi
+
+    if ! vm_is_running "$VM_NAME"; then
+        die "VM is not running. Start with: tonka start"
+    fi
+
+    local ip
+    ip=$(get_vm_ip "$VM_NAME")
+
+    # Check if project exists
+    if ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "test -d ~/projects/$project_name" 2>/dev/null; then
+        die "Project '$project_name' not found"
+    fi
+
+    # Get branch name for this worktree
+    local branch_name
+    branch_name=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "cd ~/projects/$project_name && git branch --show-current" 2>/dev/null) || branch_name=""
+
+    # Find the repo this worktree belongs to
+    local repo_path
+    repo_path=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "cd ~/projects/$project_name && git rev-parse --path-format=absolute --git-common-dir" 2>/dev/null) || die "Could not determine repo"
+    repo_path=$(dirname "$repo_path")
+
+    log_info "Removing worktree '$project_name'..."
+    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "cd '$repo_path' && git worktree remove ~/projects/$project_name"
+
+    # Offer to delete the branch if it exists
+    if [[ -n "$branch_name" ]]; then
+        read -p "Delete branch '$branch_name'? [y/N] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+                "cd '$repo_path' && git branch -D '$branch_name'" && \
+                log_info "Branch '$branch_name' deleted." || \
+                log_warn "Failed to delete branch '$branch_name'"
+        fi
+    fi
+
+    log_info "Project '$project_name' removed."
+}
+
 cmd_rebuild_base() {
     if vm_exists "$BASE_VM_NAME"; then
         if vm_is_running "$BASE_VM_NAME"; then
@@ -880,6 +929,10 @@ main() {
         difftool)
             shift
             cmd_difftool "$@"
+            ;;
+        rm)
+            shift
+            cmd_rm "$@"
             ;;
         cleanup)
             cmd_cleanup
