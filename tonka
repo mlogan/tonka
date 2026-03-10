@@ -477,9 +477,9 @@ cmd_new() {
         log_info "Using repo: $repo_name"
     fi
 
-    log_info "Creating worktree '$project_name' from '$repo_name'..."
+    log_info "Fetching origin/main and creating worktree '$project_name'..."
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-        "mkdir -p ~/projects && cd ~/repos/$repo_name && git worktree add ~/projects/$project_name -b $project_name"
+        "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin main && git worktree add ~/projects/$project_name -b $project_name origin/main"
 
     log_info "Starting Claude in $project_name..."
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
