@@ -295,10 +295,25 @@ sync_claude_settings() {
         done
     fi
 
-    # Copy ~/.claude.json only if it doesn't exist (for initial onboarding state)
-    if [[ -f "$HOME/.claude.json" ]]; then
-        if ! ssh $ssh_opts "$TART_USER@$ip" "test -f ~/.claude.json" 2>/dev/null; then
-            scp $ssh_opts "$HOME/.claude.json" "$TART_USER@$ip":~/.claude.json
+    # Ensure onboarding is marked complete so Claude doesn't show the onboarding flow
+    if ! ssh $ssh_opts "$TART_USER@$ip" "test -f ~/.claude.json && /opt/homebrew/bin/jq -e '.hasCompletedOnboarding == true' ~/.claude.json" &>/dev/null; then
+        log_info "Marking Claude onboarding as complete..."
+        ssh $ssh_opts "$TART_USER@$ip" "
+            if [ -f ~/.claude.json ]; then
+                /opt/homebrew/bin/jq '.hasCompletedOnboarding = true' ~/.claude.json > ~/.claude.json.tmp && mv ~/.claude.json.tmp ~/.claude.json
+            else
+                echo '{\"hasCompletedOnboarding\": true}' > ~/.claude.json
+            fi"
+        changed=true
+    fi
+
+    # Sync CLAUDE.md if changed
+    if [[ -f "$HOME/.claude/CLAUDE.md" ]]; then
+        local local_hash remote_hash
+        local_hash=$(md5 -q "$HOME/.claude/CLAUDE.md")
+        remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q ~/.claude/CLAUDE.md 2>/dev/null" || echo "")
+        if [[ "$local_hash" != "$remote_hash" ]]; then
+            scp $ssh_opts "$HOME/.claude/CLAUDE.md" "$TART_USER@$ip":~/.claude/CLAUDE.md
             changed=true
         fi
     fi
