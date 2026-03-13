@@ -59,7 +59,7 @@ export PATH="/opt/homebrew/bin:$PATH"
 
 # Install essential tools via brew
 echo "Installing essential tools..."
-sudo -u "$TUSER" -H /opt/homebrew/bin/brew install git gh
+sudo -u "$TUSER" -H /opt/homebrew/bin/brew install git gh jq
 
 # Install host brew formulae
 if [[ -n "$BREW_FORMULAE" ]]; then
