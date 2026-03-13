@@ -432,16 +432,6 @@ create_base_vm() {
     log_info "Base VM '$BASE_VM_NAME' created successfully!"
 }
 
-ssh_to_https() {
-    local url="$1"
-    # Convert git@github.com:user/repo.git to https://github.com/user/repo.git
-    if [[ "$url" =~ ^git@([^:]+):(.+)$ ]]; then
-        echo "https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-    else
-        echo "$url"
-    fi
-}
-
 cmd_new_repo() {
     local repo_path="${1:-}"
     if [[ -z "$repo_path" ]]; then
@@ -458,15 +448,19 @@ cmd_new_repo() {
     if [[ -z "$git_remote" ]]; then
         die "No git remote 'origin' found"
     fi
-    # Convert SSH URL to HTTPS for gh credential helper
-    git_remote=$(ssh_to_https "$git_remote")
 
     ensure_vm
+    sync_claude_settings
     local ip
     ip=$(get_vm_ip "$VM_NAME")
 
+    # Warn if HTTPS remote but no gh credentials on host
+    if [[ "$git_remote" == https://* ]] && [[ ! -f "$HOME/.config/gh/hosts.yml" ]]; then
+        log_warn "HTTPS remote detected but no gh credentials found on host. Run 'gh auth login' if clone fails."
+    fi
+
     log_info "Cloning $repo_name into VM..."
-    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+    ssh -A -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
         "mkdir -p ~/repos && git clone '$git_remote' ~/repos/$repo_name"
     log_info "Repo '$repo_name' added. Create a project with: tonka new <project-name> $repo_name"
 }
@@ -493,7 +487,7 @@ cmd_new() {
     fi
 
     log_info "Fetching origin/main and creating worktree '$project_name'..."
-    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+    ssh -A -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
         "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin main && git worktree add ~/projects/$project_name -b $project_name origin/main && cd ~/projects/$project_name && git push -u origin $project_name"
 
     log_info "Starting Claude in $project_name..."
@@ -549,7 +543,7 @@ cmd_pr() {
 
     # No existing project found, create one with the branch name
     log_info "Fetching PR #$pr_number..."
-    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+    ssh -A -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
         "cd ~/repos/$repo_name && git fetch origin pull/$pr_number/head:$branch_name"
 
     log_info "Creating worktree '$branch_name'..."
