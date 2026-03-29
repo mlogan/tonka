@@ -126,7 +126,10 @@ sudo systemsetup -setremotelogin on
 if [[ -n "$GITHUB_TOKEN" ]]; then
     echo "Configuring GitHub CLI authentication..."
     sudo -u "$TUSER" -H /bin/bash -c "echo '$GITHUB_TOKEN' | /opt/homebrew/bin/gh auth login --with-token"
-    sudo -u "$TUSER" -H /opt/homebrew/bin/gh auth setup-git
+    # Explicitly set credential helper (clear macOS osxkeychain default)
+    sudo -u "$TUSER" -H git config --global --unset-all credential.helper 2>/dev/null || true
+    sudo -u "$TUSER" -H git config --global credential.helper ""
+    sudo -u "$TUSER" -H git config --global --add credential.helper "/opt/homebrew/bin/gh auth git-credential"
 fi
 
 # Helper to convert SSH URLs to HTTPS
