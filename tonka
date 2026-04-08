@@ -53,7 +53,8 @@ Usage: tonka <command> [arguments]
 
 Commands:
   new-repo <repo-path>      Clone a git repo into the VM
-  new <project> [repo]      Create a project worktree from a repo
+  new <project> [repo] [--branch <branch>]
+                            Create a project worktree from a repo (defaults to origin/main)
   pr <pr#> [repo]           Checkout a PR (creates project or opens existing)
   cp <src> [dest]           Copy a local file/directory into the VM (dest defaults to ~)
   sync                      Fetch branches from VM repo to current local repo
@@ -472,10 +473,36 @@ cmd_new_repo() {
 }
 
 cmd_new() {
-    local project_name="${1:-}"
-    local repo_name="${2:-}"
+    local project_name=""
+    local repo_name=""
+    local branch_name=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --branch|-b)
+                branch_name="${2:-}"
+                shift 2
+                ;;
+            --branch=*)
+                branch_name="${1#*=}"
+                shift
+                ;;
+            -*)
+                die "Unknown option: $1"
+                ;;
+            *)
+                if [[ -z "$project_name" ]]; then
+                    project_name="$1"
+                elif [[ -z "$repo_name" ]]; then
+                    repo_name="$1"
+                else
+                    die "Unexpected argument: $1"
+                fi
+                shift
+                ;;
+        esac
+    done
     if [[ -z "$project_name" ]]; then
-        die "Usage: tonka new <project-name> [repo-name]"
+        die "Usage: tonka new <project-name> [repo-name] [--branch <branch>]"
     fi
 
     ensure_vm
@@ -492,9 +519,15 @@ cmd_new() {
         log_info "Using repo: $repo_name"
     fi
 
-    log_info "Fetching origin/main and creating worktree '$project_name'..."
-    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-        "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin main && git worktree add ~/projects/$project_name -b $project_name origin/main && cd ~/projects/$project_name && git push -u origin $project_name"
+    if [[ -n "$branch_name" ]]; then
+        log_info "Fetching branch '$branch_name' and creating worktree '$project_name'..."
+        ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+            "cd ~/repos/$repo_name && git fetch origin '$branch_name':refs/remotes/origin/'$branch_name' && mkdir -p ~/projects && git worktree add ~/projects/$project_name -B '$branch_name' origin/'$branch_name'"
+    else
+        log_info "Fetching origin/main and creating worktree '$project_name'..."
+        ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+            "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin main && git worktree add ~/projects/$project_name -b $project_name origin/main && cd ~/projects/$project_name && git push -u origin $project_name"
+    fi
 
     log_info "Starting Claude in $project_name..."
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
