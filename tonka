@@ -47,6 +47,32 @@ die() {
     exit 1
 }
 
+# Detect the default branch (main or master) for a remote repo.
+# Usage (local): default_branch=$(get_default_branch /path/to/repo)
+# Usage (remote via SSH): default_branch=$(get_default_branch_ssh "$ip" "$repo_name")
+get_default_branch() {
+    local repo_path="${1:-.}"
+    if git -C "$repo_path" rev-parse --verify origin/main &>/dev/null; then
+        echo "main"
+    elif git -C "$repo_path" rev-parse --verify origin/master &>/dev/null; then
+        echo "master"
+    else
+        die "Could not determine default branch (neither origin/main nor origin/master found)"
+    fi
+}
+
+get_default_branch_ssh() {
+    local ip="$1"
+    local repo_name="$2"
+    local branch
+    branch=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "cd ~/repos/$repo_name && if git rev-parse --verify origin/main &>/dev/null; then echo main; elif git rev-parse --verify origin/master &>/dev/null; then echo master; fi")
+    if [[ -z "$branch" ]]; then
+        die "Could not determine default branch for '$repo_name' (neither origin/main nor origin/master found)"
+    fi
+    echo "$branch"
+}
+
 usage() {
     cat <<EOF
 Usage: tonka <command> [arguments]
@@ -54,15 +80,15 @@ Usage: tonka <command> [arguments]
 Commands:
   new-repo <repo-path>      Clone a git repo into the VM
   new <project> [repo] [--branch <branch>]
-                            Create a project worktree from a repo (defaults to origin/main)
+                            Create a project worktree from a repo (defaults to default branch)
   pr <pr#> [repo]           Checkout a PR (creates project or opens existing)
   cp <src> [dest]           Copy a local file/directory into the VM (dest defaults to ~)
   sync                      Fetch branches from VM repo to current local repo
   sh [project]              SSH into VM (optionally into a project)
   cl <project>              Run Claude in a project
   cursor <project>          Open project in Cursor/VS Code via SSH
-  diff <project>            Sync and diff project against origin/main
-  difftool <project>        Sync and open difftool for project against origin/main
+  diff <project>            Sync and diff project against default branch
+  difftool <project>        Sync and open difftool for project against default branch
   rm <project>              Remove a project (worktree) from the VM
   start                     Start the tonka VM
   stop                      Stop the tonka VM
@@ -524,9 +550,11 @@ cmd_new() {
         ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
             "cd ~/repos/$repo_name && git fetch origin '$branch_name':refs/remotes/origin/'$branch_name' && mkdir -p ~/projects && git worktree add ~/projects/$project_name -B '$branch_name' origin/'$branch_name'"
     else
-        log_info "Fetching origin/main and creating worktree '$project_name'..."
+        local default_branch
+        default_branch=$(get_default_branch_ssh "$ip" "$repo_name")
+        log_info "Fetching origin/$default_branch and creating worktree '$project_name'..."
         ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-            "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin main && git worktree add ~/projects/$project_name -b $project_name origin/main && cd ~/projects/$project_name && git push -u origin $project_name"
+            "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin $default_branch && git worktree add ~/projects/$project_name -b $project_name origin/$default_branch && cd ~/projects/$project_name && git push -u origin $project_name"
     fi
 
     log_info "Starting Claude in $project_name..."
@@ -792,8 +820,10 @@ cmd_diff_helper() {
     GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -i $SSH_KEY" \
         git -C "$local_repo" fetch "$TART_USER@$ip:repos/$repo_name" '+refs/heads/*:refs/remotes/tonka/*'
 
+    local default_branch
+    default_branch=$(get_default_branch "$local_repo")
     local merge_base
-    merge_base=$(git -C "$local_repo" merge-base origin/main "tonka/$branch_name")
+    merge_base=$(git -C "$local_repo" merge-base "origin/$default_branch" "tonka/$branch_name")
     git -C "$local_repo" "$git_cmd" "$merge_base..tonka/$branch_name"
 }
 
