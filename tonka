@@ -554,7 +554,7 @@ cmd_new() {
         default_branch=$(get_default_branch_ssh "$ip" "$repo_name")
         log_info "Fetching origin/$default_branch and creating worktree '$project_name'..."
         ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-            "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin $default_branch && git worktree add ~/projects/$project_name -b $project_name origin/$default_branch && cd ~/projects/$project_name && git push -u origin $project_name"
+            "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin $default_branch && git worktree add ~/projects/$project_name -b $project_name origin/$default_branch && cd ~/projects/$project_name && git push -u origin $project_name 2>/dev/null || true"
     fi
 
     log_info "Starting Claude in $project_name..."
