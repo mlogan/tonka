@@ -78,6 +78,7 @@ usage() {
 Usage: tonka <command> [arguments]
 
 Commands:
+  fork <github-url>          Fork a GitHub repo and clone into the VM
   new-repo <repo-path>      Clone a git repo into the VM
   new <project> [repo] [--branch <branch>]
                             Create a project worktree from a repo (defaults to default branch)
@@ -97,6 +98,7 @@ Commands:
   rebuild-base              Rebuild the base VM from scratch
 
 Examples:
+  tonka fork https://github.com/org/repo
   tonka new-repo ~/dev/myproject
   tonka new feature-branch myproject
   tonka pr 123
@@ -498,6 +500,45 @@ cmd_new_repo() {
     log_info "Repo '$repo_name' added. Create a project with: tonka new <project-name> $repo_name"
 }
 
+cmd_fork() {
+    local github_url="${1:-}"
+    if [[ -z "$github_url" ]]; then
+        die "Usage: tonka fork <github-url>"
+    fi
+
+    # Extract repo name from URL (handles both https and ssh formats)
+    local repo_name
+    repo_name=$(basename "$github_url" .git)
+
+    if ! command -v gh &>/dev/null; then
+        die "gh CLI is required for forking. Install it with: brew install gh"
+    fi
+
+    log_info "Forking $github_url..."
+    local fork_url
+    fork_url=$(gh repo fork "$github_url" --clone=false 2>&1 | grep -oE 'https://github\.com/[^ ]+' | head -1)
+    if [[ -z "$fork_url" ]]; then
+        # gh repo fork doesn't print the URL if fork already exists, derive it
+        local gh_user
+        gh_user=$(gh api user --jq .login)
+        fork_url="https://github.com/$gh_user/$repo_name"
+    fi
+    log_info "Fork: $fork_url"
+
+    # Extract upstream owner/repo for setting upstream remote
+    local upstream_nwo
+    upstream_nwo=$(echo "$github_url" | sed -E 's|.*github\.com[:/]||; s|\.git$||')
+
+    ensure_vm
+    local ip
+    ip=$(get_vm_ip "$VM_NAME")
+
+    log_info "Cloning fork into VM..."
+    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "mkdir -p ~/repos && git clone '$fork_url' ~/repos/$repo_name && cd ~/repos/$repo_name && git remote add upstream 'https://github.com/$upstream_nwo.git' && git fetch upstream"
+    log_info "Repo '$repo_name' forked and added. Create a project with: tonka new <project-name> $repo_name"
+}
+
 cmd_new() {
     local project_name=""
     local repo_name=""
@@ -554,7 +595,7 @@ cmd_new() {
         default_branch=$(get_default_branch_ssh "$ip" "$repo_name")
         log_info "Fetching origin/$default_branch and creating worktree '$project_name'..."
         ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-            "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin $default_branch && git worktree add ~/projects/$project_name -b $project_name origin/$default_branch && cd ~/projects/$project_name && git push -u origin $project_name 2>/dev/null || true"
+            "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin $default_branch && git worktree add ~/projects/$project_name -b $project_name origin/$default_branch && cd ~/projects/$project_name && git push -u origin $project_name"
     fi
 
     log_info "Starting Claude in $project_name..."
@@ -960,6 +1001,10 @@ main() {
     fi
 
     case "$1" in
+        fork)
+            shift
+            cmd_fork "$@"
+            ;;
         new-repo)
             shift
             cmd_new_repo "$@"
