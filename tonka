@@ -533,9 +533,19 @@ cmd_fork() {
     local ip
     ip=$(get_vm_ip "$VM_NAME")
 
-    log_info "Cloning fork into VM..."
-    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-        "mkdir -p ~/repos && git clone '$fork_url' ~/repos/$repo_name && cd ~/repos/$repo_name && git remote add upstream 'https://github.com/$upstream_nwo.git' && git fetch upstream"
+    local repo_exists
+    repo_exists=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "test -d ~/repos/$repo_name && echo yes || echo no")
+
+    if [[ "$repo_exists" == "yes" ]]; then
+        log_info "Repo '$repo_name' already exists in VM, updating remotes..."
+        ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+            "cd ~/repos/$repo_name && git remote set-url origin '$fork_url' && (git remote add upstream 'https://github.com/$upstream_nwo.git' 2>/dev/null || git remote set-url upstream 'https://github.com/$upstream_nwo.git') && git fetch upstream && git fetch origin"
+    else
+        log_info "Cloning fork into VM..."
+        ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+            "mkdir -p ~/repos && git clone '$fork_url' ~/repos/$repo_name && cd ~/repos/$repo_name && git remote add upstream 'https://github.com/$upstream_nwo.git' && git fetch upstream"
+    fi
     log_info "Repo '$repo_name' forked and added. Create a project with: tonka new <project-name> $repo_name"
 }
 
