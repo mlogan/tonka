@@ -516,7 +516,7 @@ cmd_fork() {
 
     log_info "Forking $github_url..."
     local fork_url
-    fork_url=$(gh repo fork "$github_url" --clone=false 2>&1 | grep -oE 'https://github\.com/[^ ]+' | head -1)
+    fork_url=$(gh repo fork "$github_url" --clone=false 2>&1 | grep -oE 'https://github\.com/[^ ]+' | head -1 || true)
     if [[ -z "$fork_url" ]]; then
         # gh repo fork doesn't print the URL if fork already exists, derive it
         local gh_user
