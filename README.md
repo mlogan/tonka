@@ -86,3 +86,18 @@ Variables (can be set in config file or environment):
 - `TONKA_DOTFILES_REPO` - Git URL of your dotfiles repo (should have `setup.sh` at root)
 - `TONKA_TOOLS` - Space-separated list of tools to install: `rust`, `go`, `nodejs`, `python`
 - `GITHUB_TOKEN` - Passed to VM for GitHub CLI authentication (auto-detected from `gh auth token` if not set)
+
+## Troubleshooting
+
+### "SSH not ready after 60 seconds" on `tonka rebuild-base` or first `tonka` command
+
+On macOS Sequoia and later, your terminal app (iTerm, Terminal.app, Ghostty, etc.) needs **Local Network** privacy permission to reach VMs on the tart bridge. If it's denied, every connection to a LAN address is silently dropped — ARP works, but TCP/ICMP fail with "No route to host" — and tonka's SSH wait loop will time out even though the VM is healthy.
+
+**Fix:**
+
+1. Open **System Settings → Privacy & Security → Local Network**
+2. Enable your terminal app
+3. **Quit (Cmd+Q) and reopen** the terminal — child processes of the old instance inherit the denied state
+4. Verify with `ping <vm-ip>` (e.g. `ping 192.168.64.2`) before retrying
+
+You can confirm this is the cause by running `ping <vm-ip>` from your shell while the VM is running. If it fails with `No route to host` while `arp -a` shows the VM's MAC, it's the privacy block.

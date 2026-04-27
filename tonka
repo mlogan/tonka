@@ -73,6 +73,21 @@ get_default_branch_ssh() {
     echo "$branch"
 }
 
+ssh_failure_hint() {
+    local ip="$1"
+    # If even ping fails, the host can't reach the VM at all.
+    if ! ping -c 1 -W 2000 -t 2 "$ip" &>/dev/null; then
+        log_error ""
+        log_error "Host cannot reach the VM at $ip (ping also failed)."
+        log_error "On macOS this may be caused by Local Network privacy:"
+        log_error "if your terminal app is denied access to LAN devices,"
+        log_error "all connections to the VM will silently fail."
+        log_error ""
+        log_error "Fix: System Settings → Privacy & Security → Local Network"
+        log_error "    Enable your terminal app, then quit (Cmd+Q) and reopen it."
+    fi
+}
+
 usage() {
     cat <<EOF
 Usage: tonka <command> [arguments]
@@ -196,6 +211,7 @@ wait_for_ssh() {
         sleep 1
         ((attempt++))
         if [[ $attempt -ge $max_attempts ]]; then
+            ssh_failure_hint "$ip"
             die "SSH not ready after $max_attempts seconds"
         fi
     done
@@ -405,6 +421,7 @@ create_base_vm() {
         ((attempt++))
         if [[ $attempt -ge $max_attempts ]]; then
             kill $vm_pid 2>/dev/null || true
+            ssh_failure_hint "$ip"
             die "SSH not ready after $max_attempts seconds"
         fi
     done
