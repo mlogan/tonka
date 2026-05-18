@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tonka VM Lifecycle — step-by-step walkthrough</title>
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --muted: #5b6470;
+    --bg: #fdfdfc;
+    --panel: #f4f1ec;
+    --border: #d9d4cc;
+    --accent: #b4541a;
+    --accent-soft: #f5e2d1;
+    --base: #2d5a8e;
+    --base-soft: #e1ebf6;
+    --warn: #9a6d00;
+    --warn-soft: #faf0d4;
+    --ok: #2e6b3b;
+    --ok-soft: #e0efd9;
+    --code-bg: #efeae2;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.55;
+    font-size: 16px;
+  }
+  main { max-width: 980px; margin: 0 auto; padding: 2.4rem 1.4rem 5rem; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 1.2rem; margin-bottom: 1.8rem; }
+  header h1 { margin: 0 0 0.3rem; font-size: 1.85rem; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: 0.97rem; }
+  nav.toc { background: var(--panel); border: 1px solid var(--border); padding: 0.8rem 1.1rem; border-radius: 6px; margin-bottom: 2.4rem; font-size: 0.93rem; }
+  nav.toc ol { margin: 0.3rem 0 0; padding-left: 1.4rem; }
+  nav.toc a { color: var(--fg); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+  section { margin: 2.6rem 0; }
+  h2 { font-size: 1.35rem; margin: 0 0 0.4rem; letter-spacing: -0.005em; }
+  h2 .anchor { color: var(--muted); font-weight: 400; font-size: 0.85rem; margin-left: 0.4rem; }
+  h3 { font-size: 1.06rem; margin: 1.6rem 0 0.4rem; }
+  p { margin: 0.6rem 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em; background: var(--code-bg); padding: 0.08em 0.36em; border-radius: 3px; }
+  pre { background: var(--code-bg); padding: 0.85rem 1rem; border-radius: 5px; overflow-x: auto; font-size: 0.85rem; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; margin: 0.6rem 0; }
+  th, td { text-align: left; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; }
+  aside { border-left: 3px solid var(--border); padding: 0.6rem 0.9rem; margin: 1rem 0; background: var(--panel); border-radius: 0 4px 4px 0; font-size: 0.93rem; }
+  aside.note { border-color: var(--base); background: var(--base-soft); }
+  aside.warn { border-color: var(--warn); background: var(--warn-soft); }
+  aside.tip { border-color: var(--ok); background: var(--ok-soft); }
+  .badge { display: inline-block; font-size: 0.74rem; padding: 0.1rem 0.5rem; border-radius: 10px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge.base { background: var(--base-soft); color: var(--base); }
+  .badge.runtime { background: var(--accent-soft); color: var(--accent); }
+  .badge.sync { background: var(--ok-soft); color: var(--ok); }
+  .step-list { list-style: none; padding: 0; margin: 0.4rem 0; counter-reset: step; }
+  .step-list > li {
+    counter-increment: step;
+    position: relative;
+    padding: 0.55rem 0.9rem 0.55rem 2.6rem;
+    border-left: 2px solid var(--border);
+    margin-left: 0.6rem;
+  }
+  .step-list > li::before {
+    content: counter(step);
+    position: absolute;
+    left: -0.85rem;
+    top: 0.55rem;
+    width: 1.6rem; height: 1.6rem;
+    border-radius: 50%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    text-align: center;
+    line-height: 1.55rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .step-list.base > li::before { background: var(--base-soft); color: var(--base); border-color: var(--base); }
+  .step-list.runtime > li::before { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .step-list.sync > li::before { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+  .step-list .where { color: var(--muted); font-size: 0.82rem; display: block; margin-top: 0.15rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  details { background: var(--panel); border: 1px solid var(--border); border-radius: 5px; padding: 0.6rem 0.9rem; margin: 0.7rem 0; }
+  details > summary { cursor: pointer; font-weight: 600; font-size: 0.93rem; }
+  details[open] > summary { margin-bottom: 0.5rem; }
+  figure { margin: 1.2rem 0; }
+  figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 0.3rem; text-align: center; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+  ul.tight { margin: 0.3rem 0; padding-left: 1.3rem; }
+  ul.tight li { margin: 0.15rem 0; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 2.2rem 0; }
+  @media (max-width: 720px) {
+    main { padding: 1.4rem 0.9rem 3rem; }
+    .grid-2 { grid-template-columns: 1fr; }
+    header h1 { font-size: 1.45rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Tonka VM Lifecycle</h1>
+  <div class="sub">A step-by-step walkthrough of every action that runs when a tonka VM is created — from the first Tart pull down to <code>claude --dangerously-skip-permissions</code> opening a worktree.</div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#mental-model">Mental model — two VMs, three lifecycles</a></li>
+    <li><a href="#architecture">Architecture diagram</a></li>
+    <li><a href="#entry">Entrypoints — what triggers VM creation</a></li>
+    <li><a href="#base-flow">Phase A — Base VM creation</a></li>
+    <li><a href="#install-flow">Phase B — Guest-side <code>install.sh</code></a></li>
+    <li><a href="#runtime-flow">Phase C — Tonka VM creation (clone &amp; boot)</a></li>
+    <li><a href="#sync-flow">Phase D — <code>sync_claude_settings</code> on every command</a></li>
+    <li><a href="#auth-lifecycle">gh authentication lifecycle</a></li>
+    <li><a href="#project-flow">Phase E — Creating a project (<code>tonka new</code>)</a></li>
+    <li><a href="#destruction">What gets destroyed and when</a></li>
+    <li><a href="#refmap">Function ↔ file map</a></li>
+  </ol>
+</nav>
+
+<section id="mental-model">
+  <h2>1. Mental model — two VMs, three lifecycles</h2>
+  <p>Tonka manages exactly <strong>two named VMs</strong>:</p>
+  <table>
+    <thead><tr><th>Name</th><th>Role</th><th>Built from</th><th>Built how often</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="badge base">tonka-base</span></td>
+        <td>Frozen template. Holds dotfiles, brew packages, toolchains, Claude CLI.</td>
+        <td><code>TONKA_BASE_IMAGE</code> (Tart registry image)</td>
+        <td>Once. Re-built only via <code>tonka rebuild-base</code>.</td>
+      </tr>
+      <tr>
+        <td><span class="badge runtime">tonka-vm</span></td>
+        <td>Your live workspace. Holds <code>~/repos/</code> and <code>~/projects/</code>.</td>
+        <td><code>tart clone tonka-base</code></td>
+        <td>Once (on first command needing the VM). Re-cloned if deleted.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>There are <strong>three creation flows</strong> that the script orchestrates, each living in a different function:</p>
+  <ul class="tight">
+    <li><span class="badge base">A</span> <code>create_base_vm</code> — builds <code>tonka-base</code> from a clean Tart image.</li>
+    <li><span class="badge runtime">B</span> <code>ensure_vm</code> — clones &amp; boots <code>tonka-vm</code> from <code>tonka-base</code>.</li>
+    <li><span class="badge sync">C</span> <code>sync_claude_settings</code> — keeps the running VM in sync with the host on every command.</li>
+  </ul>
+  <aside class="note">
+    Most "tonka commands" implicitly run all three: <code>ensure_vm → sync_claude_settings → do the thing</code>. Knowing which phase a given line belongs to is the key to debugging.
+  </aside>
+</section>
+
+<section id="architecture">
+  <h2>2. Architecture diagram</h2>
+  <figure>
+    <svg viewBox="0 0 940 460" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tonka host and VM relationship">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#5b6470"/>
+        </marker>
+        <marker id="arrow-base" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#2d5a8e"/>
+        </marker>
+        <marker id="arrow-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#b4541a"/>
+        </marker>
+      </defs>
+
+      <rect x="20" y="20" width="280" height="420" rx="6" fill="#fdfdfc" stroke="#d9d4cc" stroke-width="1.5"/>
+      <text x="160" y="46" text-anchor="middle" font-size="14" font-weight="600" fill="#1a1a1a">macOS host</text>
+      <text x="160" y="62" text-anchor="middle" font-size="11" fill="#5b6470">~/workspace/tonka/</text>
+
+      <rect x="40" y="84" width="240" height="58" rx="4" fill="#f4f1ec" stroke="#d9d4cc"/>
+      <text x="160" y="106" text-anchor="middle" font-size="12" font-weight="600">tonka script</text>
+      <text x="160" y="124" text-anchor="middle" font-size="10.5" fill="#5b6470">orchestrator, runs on host</text>
+
+      <rect x="40" y="160" width="240" height="56" rx="4" fill="#f4f1ec" stroke="#d9d4cc"/>
+      <text x="160" y="180" text-anchor="middle" font-size="12" font-weight="600">~/.tonka.conf</text>
+      <text x="160" y="197" text-anchor="middle" font-size="10.5" fill="#5b6470">DOTFILES, TOOLS, CPU/RAM</text>
+
+      <rect x="40" y="234" width="240" height="56" rx="4" fill="#f4f1ec" stroke="#d9d4cc"/>
+      <text x="160" y="254" text-anchor="middle" font-size="12" font-weight="600">~/.claude/ + Keychain</text>
+      <text x="160" y="271" text-anchor="middle" font-size="10.5" fill="#5b6470">settings · skills · creds · plugins</text>
+
+      <rect x="40" y="308" width="240" height="56" rx="4" fill="#f4f1ec" stroke="#d9d4cc"/>
+      <text x="160" y="328" text-anchor="middle" font-size="12" font-weight="600">~/.ssh/id_ed25519_tonka</text>
+      <text x="160" y="345" text-anchor="middle" font-size="10.5" fill="#5b6470">generated on first run</text>
+
+      <rect x="40" y="382" width="240" height="46" rx="4" fill="#f4f1ec" stroke="#d9d4cc"/>
+      <text x="160" y="402" text-anchor="middle" font-size="12" font-weight="600">tart (CLI)</text>
+      <text x="160" y="418" text-anchor="middle" font-size="10.5" fill="#5b6470">clone · run · ip · stop · set</text>
+
+      <rect x="350" y="40" width="270" height="200" rx="6" fill="#e1ebf6" stroke="#2d5a8e" stroke-width="1.5"/>
+      <text x="485" y="64" text-anchor="middle" font-size="13" font-weight="600" fill="#2d5a8e">tonka-base (template)</text>
+      <text x="485" y="80" text-anchor="middle" font-size="11" fill="#2d5a8e">cloned from TONKA_BASE_IMAGE</text>
+
+      <rect x="370" y="100" width="230" height="30" rx="3" fill="#fff" stroke="#9ab4d2"/>
+      <text x="485" y="120" text-anchor="middle" font-size="11">user · homebrew · brew formulae</text>
+      <rect x="370" y="136" width="230" height="30" rx="3" fill="#fff" stroke="#9ab4d2"/>
+      <text x="485" y="156" text-anchor="middle" font-size="11">Claude CLI · settings · skills</text>
+      <rect x="370" y="172" width="230" height="30" rx="3" fill="#fff" stroke="#9ab4d2"/>
+      <text x="485" y="192" text-anchor="middle" font-size="11">TONKA_TOOLS (rust/go/node/python)</text>
+      <rect x="370" y="208" width="230" height="26" rx="3" fill="#fff" stroke="#9ab4d2"/>
+      <text x="485" y="225" text-anchor="middle" font-size="11">dotfiles + setup.sh</text>
+
+      <rect x="350" y="260" width="270" height="170" rx="6" fill="#f5e2d1" stroke="#b4541a" stroke-width="1.5"/>
+      <text x="485" y="284" text-anchor="middle" font-size="13" font-weight="600" fill="#b4541a">tonka-vm (workspace)</text>
+      <text x="485" y="300" text-anchor="middle" font-size="11" fill="#b4541a">tart clone tonka-base</text>
+
+      <rect x="370" y="316" width="230" height="30" rx="3" fill="#fff" stroke="#d9b58c"/>
+      <text x="485" y="336" text-anchor="middle" font-size="11">~/repos/&lt;repo-name&gt;</text>
+      <rect x="370" y="352" width="230" height="30" rx="3" fill="#fff" stroke="#d9b58c"/>
+      <text x="485" y="372" text-anchor="middle" font-size="11">~/projects/&lt;worktree&gt; (×N)</text>
+      <rect x="370" y="388" width="230" height="30" rx="3" fill="#fff" stroke="#d9b58c"/>
+      <text x="485" y="408" text-anchor="middle" font-size="11">running claude per project</text>
+
+      <rect x="680" y="60" width="240" height="100" rx="6" fill="#fff" stroke="#d9d4cc"/>
+      <text x="800" y="84" text-anchor="middle" font-size="12" font-weight="600">Tart registry</text>
+      <text x="800" y="106" text-anchor="middle" font-size="10.5" fill="#5b6470">ghcr.io/cirruslabs/</text>
+      <text x="800" y="122" text-anchor="middle" font-size="10.5" fill="#5b6470">macos-tahoe-xcode:latest</text>
+      <text x="800" y="146" text-anchor="middle" font-size="10.5" fill="#5b6470">pulled on first rebuild-base</text>
+
+      <rect x="680" y="200" width="240" height="60" rx="6" fill="#fff" stroke="#d9d4cc"/>
+      <text x="800" y="222" text-anchor="middle" font-size="12" font-weight="600">claude.ai/install.sh</text>
+      <text x="800" y="240" text-anchor="middle" font-size="10.5" fill="#5b6470">downloaded once on base build</text>
+
+      <rect x="680" y="300" width="240" height="60" rx="6" fill="#fff" stroke="#d9d4cc"/>
+      <text x="800" y="322" text-anchor="middle" font-size="12" font-weight="600">GitHub</text>
+      <text x="800" y="340" text-anchor="middle" font-size="10.5" fill="#5b6470">gh token + git clone (HTTPS)</text>
+
+      <line x1="280" y1="113" x2="345" y2="140" stroke="#5b6470" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="290" y="105" font-size="9.5" fill="#5b6470">drives</text>
+
+      <line x1="620" y1="115" x2="678" y2="105" stroke="#2d5a8e" stroke-width="1.4" marker-end="url(#arrow-base)"/>
+      <text x="623" y="100" font-size="9.5" fill="#2d5a8e">tart clone</text>
+
+      <line x1="600" y1="225" x2="678" y2="225" stroke="#2d5a8e" stroke-width="1.4" marker-end="url(#arrow-base)"/>
+      <text x="615" y="218" font-size="9.5" fill="#2d5a8e">curl install</text>
+
+      <line x1="485" y1="240" x2="485" y2="258" stroke="#b4541a" stroke-width="1.6" marker-end="url(#arrow-acc)"/>
+      <text x="495" y="252" font-size="9.5" fill="#b4541a">tart clone</text>
+
+      <line x1="600" y1="345" x2="678" y2="330" stroke="#b4541a" stroke-width="1.4" marker-end="url(#arrow-acc)"/>
+      <text x="615" y="338" font-size="9.5" fill="#b4541a">git clone</text>
+
+      <line x1="280" y1="335" x2="345" y2="335" stroke="#5b6470" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="285" y="328" font-size="9.5" fill="#5b6470">scp/ssh sync</text>
+    </svg>
+    <figcaption>Host orchestrates Tart, which materialises <code>tonka-base</code> from a registry image, then clones it into a writable <code>tonka-vm</code>.</figcaption>
+  </figure>
+</section>
+
+<section id="entry">
+  <h2>3. Entrypoints — what triggers VM creation</h2>
+  <p>Every command flows through <code>main()</code> at <code>tonka:954</code>. The relevant code paths for <em>creation</em>:</p>
+  <table>
+    <thead><tr><th>Command</th><th>Path</th><th>Effect on VMs</th></tr></thead>
+    <tbody>
+      <tr><td><code>tonka rebuild-base</code></td><td><code>cmd_rebuild_base</code> → <code>create_base_vm</code></td><td>Force-recreates <span class="badge base">tonka-base</span>. Prompts to also delete <span class="badge runtime">tonka-vm</span>.</td></tr>
+      <tr><td><code>tonka new-repo …</code></td><td><code>cmd_new_repo</code> → <code>ensure_vm</code> → <code>ensure_base_vm</code></td><td>Cold path: creates both VMs the first time. Warm path: just boots <span class="badge runtime">tonka-vm</span>.</td></tr>
+      <tr><td><code>tonka new …</code> / <code>tonka cl …</code> / <code>tonka pr …</code></td><td>same cascade</td><td>Same: triggers full creation if either VM is missing.</td></tr>
+      <tr><td><code>tonka start</code></td><td><code>cmd_start</code> → <code>ensure_vm</code></td><td>Identical cascade — useful for "warm up the VM".</td></tr>
+      <tr><td><code>tonka sh</code>, <code>tonka cp</code>, <code>tonka cursor</code></td><td>all call <code>ensure_vm</code></td><td>Same cascade.</td></tr>
+    </tbody>
+  </table>
+  <aside class="tip">
+    The cascade is: <code>ensure_vm</code> calls <code>ensure_base_vm</code>, which calls <code>create_base_vm</code> only when <code>vm_exists tonka-base</code> is false. So you never call <code>create_base_vm</code> directly except via <code>rebuild-base</code>.
+  </aside>
+</section>
+
+<section id="base-flow">
+  <h2>4. Phase A — Base VM creation <span class="anchor">tonka:363–457 · <code>create_base_vm()</code></span></h2>
+  <p>Runs <strong>once</strong>. Builds the immutable template. Takes ~10–20 minutes (depends on brew package count).</p>
+
+  <ol class="step-list base">
+    <li>
+      <strong>Pre-flight check</strong> — verify <code>sshpass</code> is installed; die if not.
+      <span class="where">tonka:367–369</span>
+    </li>
+    <li>
+      <strong>Ensure SSH key</strong> — <code>ensure_ssh_key()</code> creates <code>~/.ssh/id_ed25519_tonka</code> if missing (passphraseless, comment "tonka").
+      <span class="where">tonka:84–89, called from line 371</span>
+    </li>
+    <li>
+      <strong>Clone the macOS image</strong> — <code>tart clone $TONKA_BASE_IMAGE tonka-base</code>. First time this downloads ~10–20 GB from the Tart registry.
+      <span class="where">tonka:375</span>
+    </li>
+    <li>
+      <strong>Configure resources</strong> — <code>tart set</code> applies <code>TONKA_CPU</code>, <code>TONKA_MEMORY</code>, and optionally <code>TONKA_DISK_SIZE</code>. Defaults: all host CPUs, ⅝ of host RAM, no disk override.
+      <span class="where">tonka:376–381</span>
+    </li>
+    <li>
+      <strong>Boot the VM (headless)</strong> — <code>tart run --no-graphics tonka-base &amp;</code> as a backgrounded child, PID saved in <code>$vm_pid</code>. <em>Not</em> disowned here (different from <code>ensure_vm</code>), so the script can <code>wait $vm_pid</code> at the end.
+      <span class="where">tonka:384–385</span>
+    </li>
+    <li>
+      <strong>Initial boot wait</strong> — hard-coded <code>sleep 30</code>, then poll <code>tart ip tonka-base</code> via <code>wait_for_vm_ip</code> (60-attempt loop, 1s each).
+      <span class="where">tonka:389–392, wait_for_vm_ip at 142–160</span>
+    </li>
+    <li>
+      <strong>SSH bootstrap with default creds</strong> — loop trying <code>sshpass -p admin ssh admin@$ip true</code> until success or 60s timeout. The macOS-Tahoe-Xcode image ships with <code>admin/admin</code>.
+      <span class="where">tonka:395–405</span>
+    </li>
+    <li>
+      <strong>Collect host brew packages</strong> — <code>brew list --formula</code> and <code>brew list --cask</code> joined as space-separated strings. These are forwarded into the VM as env vars.
+      <span class="where">tonka:409–414</span>
+    </li>
+    <li>
+      <strong>Copy payload to <code>/tmp</code> on guest</strong> — three <code>sshpass scp</code> calls push:
+      <ul class="tight">
+        <li><code>guest/install.sh</code> → <code>/tmp/install.sh</code></li>
+        <li>tonka public key → <code>/tmp/tonka.pub</code></li>
+        <li>tonka private key → <code>/tmp/tonka_key</code> (yes — both keys, see warning)</li>
+      </ul>
+      <span class="where">tonka:417–420</span>
+      <aside class="warn">The private key is copied <em>into</em> the VM so the guest user can act as you against GitHub via SSH if the dotfiles repo or some workflow needs it. This is fine for a single-tenant ephemeral sandbox, but worth knowing if you ever share the VM image.</aside>
+    </li>
+    <li>
+      <strong>(Optional) copy Claude settings</strong> — if present locally, push <code>~/.claude/settings.json</code> and the <code>~/.claude/skills</code> tree to <code>/tmp/</code>.
+      <span class="where">tonka:423–430</span>
+    </li>
+    <li>
+      <strong>Build install env</strong> — assemble single shell string with <code>TONKA_USER</code>, <code>TONKA_DOTFILES_REPO</code>, <code>GITHUB_TOKEN</code>, <code>TONKA_TOOLS</code>, <code>BREW_FORMULAE</code>, <code>BREW_CASKS</code>. Each only added if non-empty.
+      <span class="where">tonka:433–449</span>
+    </li>
+    <li>
+      <strong>Run guest installer</strong> — <code>sshpass ssh admin@$ip "chmod +x /tmp/install.sh &amp;&amp; $install_env /tmp/install.sh"</code>. The bulk of the work happens inside this single SSH call. See <a href="#install-flow">Phase B</a>.
+      <span class="where">tonka:450</span>
+    </li>
+    <li>
+      <strong>Stop and freeze</strong> — <code>tart stop tonka-base</code>; <code>wait $vm_pid</code> to reap the backgrounded <code>tart run</code>. The template now exists on disk and will never be booted again until you <code>rebuild-base</code>.
+      <span class="where">tonka:452–454</span>
+    </li>
+  </ol>
+</section>
+
+<section id="install-flow">
+  <h2>5. Phase B — Guest-side <code>install.sh</code> <span class="anchor">guest/install.sh</span></h2>
+  <p>Runs as <strong>admin</strong> inside the base VM, drives all the heavy lifting that bakes into the template. Every <code>sudo -u "$TUSER"</code> call switches to the new tonka user.</p>
+
+  <ol class="step-list base">
+    <li>
+      <strong>Create the work user</strong> — <code>sysadminctl -addUser "$TONKA_USER" -fullName "Tonka User" -password tonka -admin</code>. The username matches your host login so paths are familiar.
+      <span class="where">install.sh:24–30</span>
+    </li>
+    <li>
+      <strong>Wire SSH keys</strong> — public key → <code>authorized_keys</code>; private key copy → <code>~/.ssh/id_ed25519</code>; <code>chown -R</code> to the user; <code>ssh-keyscan github.com</code> into <code>known_hosts</code>.
+      <span class="where">install.sh:33–50</span>
+    </li>
+    <li>
+      <strong>Passwordless sudo</strong> — drop <code>$TUSER ALL=(ALL) NOPASSWD: ALL</code> into <code>/etc/sudoers.d/tonka</code>.
+      <span class="where">install.sh:54–55</span>
+    </li>
+    <li>
+      <strong>Install Homebrew</strong> — official installer with <code>NONINTERACTIVE=1</code>. Adds <code>/opt/homebrew/bin</code> to the script's PATH.
+      <span class="where">install.sh:58–62</span>
+    </li>
+    <li>
+      <strong>Install essentials</strong> — <code>brew install git gh jq</code>. Hard requirement; failure aborts.
+      <span class="where">install.sh:65</span>
+    </li>
+    <li>
+      <strong>Mirror host packages</strong> — <code>brew install $BREW_FORMULAE || true</code>, then <code>brew install --cask $BREW_CASKS || true</code>. The <code>|| true</code> tolerates packages that don't apply (arch mismatches, etc.).
+      <span class="where">install.sh:67–81</span>
+    </li>
+    <li>
+      <strong>Toolchains loop</strong> — for each token in <code>TONKA_TOOLS</code>: <code>rust</code> uses rustup; <code>go</code>/<code>nodejs</code>/<code>python</code> use brew.
+      <span class="where">install.sh:83–105</span>
+    </li>
+    <li>
+      <strong>Install Claude CLI</strong> — <code>curl -fsSL https://claude.ai/install.sh | bash</code>. Lands at <code>~/.local/bin/claude</code>.
+      <span class="where">install.sh:108–109</span>
+    </li>
+    <li>
+      <strong>Seed Claude config</strong> — if the host pushed <code>/tmp/claude_settings.json</code> and/or <code>/tmp/claude_skills</code>, install them under <code>~/.claude/</code> with correct ownership.
+      <span class="where">install.sh:112–123</span>
+    </li>
+    <li>
+      <strong>Enable Remote Login (SSH daemon)</strong> — <code>systemsetup -setremotelogin on</code>. This is what makes subsequent ed25519-key SSH from the host work.
+      <span class="where">install.sh:126–127</span>
+    </li>
+    <li>
+      <strong>Git credential helper + (optional) gh auth</strong> — credential helper is <strong>always</strong> pinned to <code>gh auth git-credential</code> (so a token delivered later via Phase D's <code>hosts.yml</code> sync will work). If <code>GITHUB_TOKEN</code> was forwarded, also seed the guest's gh state via stdin-piped <code>gh auth login --with-token</code> so the very next step (dotfiles clone) can authenticate.
+      <span class="where">install.sh:130–147</span>
+    </li>
+    <li>
+      <strong>Clone &amp; run dotfiles</strong> — if <code>TONKA_DOTFILES_REPO</code> is set: convert SSH URLs to HTTPS (so the gh helper is used), <code>git clone</code> to <code>~/.dotfiles</code>, then <code>cd ~/.dotfiles &amp;&amp; ./setup.sh</code>. Errors here propagate.
+      <span class="where">install.sh:151–191</span>
+    </li>
+    <li>
+      <strong>Cleanup</strong> — delete <code>/tmp/tonka.pub</code>, <code>/tmp/tonka_key</code>, <code>/tmp/install.sh</code>.
+      <span class="where">install.sh:201–202</span>
+    </li>
+  </ol>
+</section>
+
+<section id="runtime-flow">
+  <h2>6. Phase C — Tonka VM creation <span class="anchor">tonka:197–225 · <code>ensure_vm()</code></span></h2>
+  <p>This is what runs every time you invoke a command that needs the VM. Most of it is the no-op fast path; the creation branch only fires the very first time.</p>
+
+  <ol class="step-list runtime">
+    <li>
+      <strong>Cascade to base</strong> — <code>ensure_base_vm</code> calls <code>create_base_vm</code> iff <code>tonka-base</code> doesn't exist. This is the only place where Phase A normally fires from a non-rebuild command.
+      <span class="where">tonka:198 → 190–195</span>
+    </li>
+    <li>
+      <strong>Clone if missing</strong> — when <code>tonka-vm</code> doesn't exist: <code>tart clone tonka-base tonka-vm</code>, then <code>tart set</code> with the host CPU/RAM (re-computed per host) and an optional <code>--disk-size</code>.
+      <span class="where">tonka:199–208</span>
+      <aside class="note">The clone copies the disk image — fast (CoW on APFS) but the new VM gets a different MAC, so it'll get its own IP on boot.</aside>
+    </li>
+    <li>
+      <strong>Boot if stopped</strong> — when <code>tonka-vm</code> isn't running: <code>tart run --no-graphics tonka-vm &amp;</code>, then <code>disown</code> so the script can return. <code>sleep 15</code> as initial wait.
+      <span class="where">tonka:209–212</span>
+    </li>
+    <li>
+      <strong>Discover IP</strong> — <code>wait_for_vm_ip</code> polls <code>tart ip tonka-vm</code> up to 60 times (1s each).
+      <span class="where">tonka:213–215</span>
+    </li>
+    <li>
+      <strong>Wait for SSH</strong> — <code>wait_for_ssh</code> tries <code>ssh -i id_ed25519_tonka $TONKA_USER@$ip true</code> in a BatchMode loop with <code>StrictHostKeyChecking=no</code>; 60 attempts max.
+      <span class="where">tonka:216, 162–174</span>
+    </li>
+    <li>
+      <strong>Update <code>~/.ssh/config</code></strong> — <code>update_ssh_config</code>: if the file doesn't exist, prompts to create it; if no <code>Host tonka</code> block, prompts to add it; if the block exists with a different IP, rewrites the <code>HostName</code> in place with <code>sed</code>.
+      <span class="where">tonka:217, 91–135</span>
+    </li>
+    <li>
+      <strong>Fast path on warm runs</strong> — if the VM was already running, skip clone/boot/IP-wait but still call <code>update_ssh_config</code> with the current IP to fix stale entries.
+      <span class="where">tonka:219–224</span>
+    </li>
+  </ol>
+
+  <details>
+    <summary>Edge cases worth knowing</summary>
+    <ul class="tight">
+      <li>The <code>sleep 15</code> at line 212 is shorter than the <code>sleep 30</code> in <code>create_base_vm</code> — because Phase C uses ed25519 key auth (faster to retry on failure) while Phase A still uses sshpass.</li>
+      <li>If <code>wait_for_vm_ip</code> times out the script dies with no rollback — the half-created <code>tonka-vm</code> remains and a re-run will hit the "exists" branch and try to start it again.</li>
+      <li>The <code>tart run … &amp;</code> child is <em>disowned</em>, not waited-on. The VM keeps running after the script exits. That's the design — long-lived background VM.</li>
+    </ul>
+  </details>
+</section>
+
+<section id="sync-flow">
+  <h2>7. Phase D — <code>sync_claude_settings</code> <span class="anchor">tonka:227–361</span></h2>
+  <p>Runs on most commands (<code>new-repo</code>, <code>new</code>, <code>pr</code>, <code>cl</code>) right after <code>ensure_vm</code>. Idempotent: md5-compares each artifact before re-uploading.</p>
+
+  <ol class="step-list sync">
+    <li><strong>Ensure <code>~/.claude</code></strong> exists on guest.<span class="where">tonka:252</span></li>
+    <li><strong>settings.json</strong> — md5 host vs guest; <code>scp</code> if changed.<span class="where">tonka:255–263</span></li>
+    <li><strong>skills/</strong> — recursive md5 (sort-then-hash) host vs guest; <code>scp -r</code> if changed.<span class="where">tonka:266–275</span></li>
+    <li><strong>gh hosts.yml</strong> — md5 compare; <code>scp</code> if changed.<span class="where">tonka:277–287</span></li>
+    <li><strong>git credential helper</strong> — assert helper is <code>gh auth git-credential</code>, rewriting if not. Clears any osxkeychain default that Xcode might've installed.<span class="where">tonka:290–293</span></li>
+    <li><strong>Plugins</strong> — read <code>~/.claude/plugins/installed_plugins.json</code> on host, add the official marketplace, install each plugin not already present.<span class="where">tonka:296–316</span></li>
+    <li><strong>Onboarding flag</strong> — ensure <code>~/.claude.json</code> contains <code>hasCompletedOnboarding: true</code> so Claude doesn't open the first-run wizard.<span class="where">tonka:319–328</span></li>
+    <li><strong>CLAUDE.md</strong> — md5 compare; <code>scp</code> if changed.<span class="where">tonka:331–339</span></li>
+    <li><strong>Keychain credentials</strong> — <code>security find-generic-password -s "Claude Code-credentials"</code> on host; md5 against <code>~/.claude/.credentials.json</code> on guest; piped via stdin to <code>ssh "cat &gt; … &amp;&amp; chmod 600 …"</code> if changed (quote-safe; file is mode 600 on the guest).<span class="where">tonka:342–355</span></li>
+  </ol>
+
+  <aside class="tip">
+    The credential write now uses a stdin pipe (<code>printf '%s' "$creds" | ssh ... "cat &gt; … &amp;&amp; chmod 600 …"</code>) so the blob is never interpolated into a shell string — quote-safe regardless of content, and the destination file is mode 600.
+  </aside>
+
+  <aside class="tip">
+    The skills hash uses <code>find -L</code> so a symlinked <code>~/.claude/skills</code> (e.g. into a dotclaude-staging repo) is traversed correctly. Without <code>-L</code>, BSD find would skip the top-level symlink and the hash would collapse to <code>md5</code>-of-empty.
+  </aside>
+
+  <aside class="note">
+    On entry, <code>sync_claude_settings</code> warns once if neither <code>$GITHUB_TOKEN</code> nor <code>gh auth status</code> succeeds on the host — surfacing the most common silent-failure mode for VM git operations. It also warns about broken symlinks under <code>~/.claude</code> before the sync runs.
+  </aside>
+</section>
+
+<section id="auth-lifecycle">
+  <h2>7b. gh authentication lifecycle</h2>
+  <p>Git auth inside the VM follows two paths depending on remote shape:</p>
+  <table>
+    <thead><tr><th>Remote shape</th><th>Path</th><th>Source of truth</th></tr></thead>
+    <tbody>
+      <tr><td>HTTPS</td><td>guest's <code>gh auth git-credential</code> helper reads <code>~/.config/gh/hosts.yml</code></td><td>Host's <code>hosts.yml</code>, resynced via Phase D every command</td></tr>
+      <tr><td>SSH (<code>git@…</code>, <code>ssh://…</code>)</td><td>SSH agent forwarding (<code>ssh -A</code>) from host into VM during the git operation</td><td>Host's running ssh-agent</td></tr>
+      <tr><td>Dotfiles clone in Phase B</td><td>SSH URLs are rewritten to HTTPS by <code>ssh_to_https()</code>; uses the gh credential helper</td><td>The <code>GITHUB_TOKEN</code> forwarded into install.sh, or — if absent — the helper waits for Phase D to deliver a <code>hosts.yml</code></td></tr>
+    </tbody>
+  </table>
+  <p>The credential helper is now <strong>always</strong> configured on the guest (install.sh:130–138), regardless of whether the host had a token at base-build time. This means a fresh base VM built without <code>GITHUB_TOKEN</code> still gets a working helper, and Phase D delivers the actual token on the first command after the host runs <code>gh auth login</code>.</p>
+  <p>Use <code>tonka auth-status</code> to print the current host + guest auth state side by side.</p>
+</section>
+
+<section id="project-flow">
+  <h2>8. Phase E — Creating a project <span class="anchor">tonka:492–520 · <code>cmd_new</code></span></h2>
+  <p>The user-facing "make me a Claude session" command. Everything above already ran by this point.</p>
+
+  <ol class="step-list runtime">
+    <li><strong>ensure_vm</strong> — Phase C cascade.<span class="where">tonka:499</span></li>
+    <li><strong>sync_claude_settings</strong> — Phase D.<span class="where">tonka:500</span></li>
+    <li><strong>Default repo pick</strong> — if no repo arg, <code>ls ~/repos | head -1</code> on the VM; die if empty.<span class="where">tonka:505–511</span></li>
+    <li>
+      <strong>Worktree creation</strong> — single SSH with <code>-A</code> (agent forwarding):
+<pre><code>mkdir -p ~/projects
+cd ~/repos/$repo &amp;&amp; git fetch origin main
+git worktree add ~/projects/$project -b $project origin/main
+cd ~/projects/$project &amp;&amp; git push -u origin $project</code></pre>
+      <span class="where">tonka:513–515</span>
+    </li>
+    <li>
+      <strong>Launch Claude</strong> — interactive SSH (<code>-t</code>) that <code>cd</code>s into the worktree, starts an interactive login shell, runs <code>~/.local/bin/claude --dangerously-skip-permissions</code>, and on exit drops you into a fresh shell with a hint:
+      <pre><code>Claude exited. You are still in the tonka VM.
+Press Ctrl-D to leave.</code></pre>
+      <span class="where">tonka:517–519</span>
+    </li>
+  </ol>
+
+  <aside class="tip">
+    <code>cmd_pr</code> (line 498) follows the same shape, but resolves a PR's branch via <code>gh pr view</code>, then either re-enters the existing worktree or creates a new one named after the branch.
+  </aside>
+</section>
+
+<section id="destruction">
+  <h2>9. What gets destroyed and when</h2>
+  <table>
+    <thead><tr><th>Action</th><th>tonka-base</th><th>tonka-vm</th><th>~/repos/</th><th>~/projects/</th><th>Host state</th></tr></thead>
+    <tbody>
+      <tr><td><code>tonka stop</code></td><td>—</td><td>powered off (kept)</td><td>kept</td><td>kept</td><td>—</td></tr>
+      <tr><td><code>tonka rm &lt;p&gt;</code></td><td>—</td><td>—</td><td>—</td><td>worktree removed; branch deletion prompted</td><td>—</td></tr>
+      <tr><td><code>tonka cleanup</code></td><td>—</td><td>—</td><td><code>git worktree prune</code></td><td>—</td><td>—</td></tr>
+      <tr><td><code>tonka rebuild-base</code> (only base)</td><td><strong>deleted &amp; rebuilt</strong></td><td>kept (stale)</td><td>kept</td><td>kept</td><td>SSH key kept</td></tr>
+      <tr><td><code>tonka rebuild-base</code> + "yes" to prompt</td><td><strong>deleted &amp; rebuilt</strong></td><td><strong>deleted</strong></td><td><strong>gone</strong></td><td><strong>gone</strong></td><td>SSH key kept</td></tr>
+      <tr><td>Host reboot</td><td>kept</td><td>powered off</td><td>kept</td><td>kept</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <aside class="warn">
+    Anything in <code>~/projects/</code> that hasn't been pushed is lost when the VM is deleted. Every <code>cmd_new</code> path pushes the new branch immediately (<code>git push -u origin $project</code>) — that's the safety net.
+  </aside>
+</section>
+
+<section id="refmap">
+  <h2>10. Function ↔ file map</h2>
+  <table>
+    <thead><tr><th>Function</th><th>File:lines</th><th>Called from</th></tr></thead>
+    <tbody>
+      <tr><td><code>ensure_ssh_key</code></td><td>tonka:84–89</td><td>create_base_vm</td></tr>
+      <tr><td><code>update_ssh_config</code></td><td>tonka:91–135</td><td>ensure_vm</td></tr>
+      <tr><td><code>get_vm_ip</code></td><td>tonka:137–140</td><td>most commands</td></tr>
+      <tr><td><code>wait_for_vm_ip</code></td><td>tonka:142–160</td><td>create_base_vm, ensure_vm</td></tr>
+      <tr><td><code>wait_for_ssh</code></td><td>tonka:162–174</td><td>ensure_vm</td></tr>
+      <tr><td><code>vm_exists</code> / <code>vm_is_running</code></td><td>tonka:176–184</td><td>guard checks everywhere</td></tr>
+      <tr><td><code>ensure_base_vm</code></td><td>tonka:190–195</td><td>ensure_vm</td></tr>
+      <tr><td><code>ensure_vm</code></td><td>tonka:197–225</td><td>every user command needing the VM</td></tr>
+      <tr><td><code>sync_claude_settings</code></td><td>tonka:227–361</td><td>cmd_new, cmd_new_repo, cmd_pr, cmd_cl</td></tr>
+      <tr><td><code>create_base_vm</code></td><td>tonka:363–457</td><td>ensure_base_vm, cmd_rebuild_base</td></tr>
+      <tr><td><code>cmd_auth_status</code></td><td>tonka:628–669</td><td><code>tonka auth-status</code></td></tr>
+      <tr><td><code>cmd_new_repo</code></td><td>tonka:459–490</td><td><code>tonka new-repo</code></td></tr>
+      <tr><td><code>cmd_new</code></td><td>tonka:492–520</td><td><code>tonka new</code></td></tr>
+      <tr><td><code>cmd_pr</code></td><td>tonka:522–580</td><td><code>tonka pr</code></td></tr>
+      <tr><td><code>cmd_rebuild_base</code></td><td>tonka:884–912</td><td><code>tonka rebuild-base</code></td></tr>
+      <tr><td><code>install.sh</code> (guest)</td><td>guest/install.sh:1–203</td><td>run by create_base_vm over ssh</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<hr>
+
+<aside class="tip">
+  <strong>Ready for the next step.</strong> Tell me which behaviour has been broken and what new functionality you want — with this map I can target the exact phase and function that owns the change.
+</aside>
+
+</main>
+</body>
+</html>

@@ -64,6 +64,9 @@ tonka list
 # Clean up merged worktrees
 tonka cleanup
 
+# Show host + guest GitHub auth state (useful when clones fail)
+tonka auth-status
+
 # Rebuild base VM (after config changes)
 tonka rebuild-base
 ```
@@ -72,7 +75,19 @@ tonka rebuild-base
 
 1. **Base VM**: Created once with your dotfiles, tools, and Claude CLI installed
 2. **Tonka VM**: Cloned from base, contains your repos and project worktrees
-3. **Git Auth**: Uses `gh` CLI credential helper (synced from host)
+3. **Git Auth**: Uses `gh` CLI credential helper inside the VM, with the host's `~/.config/gh/hosts.yml` resynced on every command. SSH remotes use agent forwarding (`ssh -A`) from the host.
+
+### Supported host configurations
+
+The basic workflow (`rebuild-base → new-repo → new`) is designed to work regardless of:
+
+- **`~/.claude` layout**: regular directory, or symlinked into a separate repo (e.g. a dotfiles or `dotclaude-staging` worktree). Leaf files (`settings.json`, `skills/`, `CLAUDE.md`, `plugins/`) may be symlinks individually.
+- **Dotfiles manager**: any tool is fine as long as the resulting repo has `setup.sh` at its root (stow, chezmoi, yadm, bare-git, plain symlinks — all work).
+- **`gh` / `jq` install location on the host**: any PATH-reachable install works. Inside the VM, Homebrew installs both at `/opt/homebrew/bin/...` by construction.
+- **`gh` auth state on the host**: env-only token, on-disk `hosts.yml`, web-flow / passkey. If no auth at all, `tonka` warns once and proceeds — git operations inside the VM may fail until you run `gh auth login` on the host.
+- **Token rotation**: a new host token is propagated to the guest on the next command (via `hosts.yml` resync).
+
+If something looks broken, `tonka auth-status` prints the host + guest auth state for diagnosis.
 
 ## Configuration
 

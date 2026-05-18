@@ -21,9 +21,14 @@ BREW_CASKS="${BREW_CASKS:-}"
 
 echo "=== Tonka Base VM Setup ==="
 
-# Create user
-echo "Creating user $TUSER..."
-sudo sysadminctl -addUser "$TUSER" -fullName "Tonka User" -password tonka -admin
+# Create user (idempotent — skip if a user with this name already exists on
+# the base image)
+if id -u "$TUSER" &>/dev/null; then
+    echo "User $TUSER already exists, skipping creation"
+else
+    echo "Creating user $TUSER..."
+    sudo sysadminctl -addUser "$TUSER" -fullName "Tonka User" -password tonka -admin
+fi
 
 # Set up SSH directory for user
 echo "Configuring SSH access..."
@@ -122,36 +127,70 @@ fi
 echo "Enabling SSH..."
 sudo systemsetup -setremotelogin on
 
-# Configure GitHub CLI and git credential helper (needed for dotfiles and work repos)
+# Always pin git's credential helper to gh, regardless of whether the host
+# forwarded a token. Without this, hosts using web-flow / passkey-only gh
+# auth would land here with no helper configured and the dotfiles HTTPS
+# clone (and later git operations) would fail with "could not read
+# Username". The token itself can arrive later via Phase D's hosts.yml sync.
+echo "Configuring git credential helper..."
+sudo -u "$TUSER" -H git config --global --unset-all credential.helper 2>/dev/null || true
+sudo -u "$TUSER" -H git config --global credential.helper ""
+sudo -u "$TUSER" -H git config --global --add credential.helper "/opt/homebrew/bin/gh auth git-credential"
+
+# If the host forwarded a token, also seed the guest's gh auth state so the
+# dotfiles clone in this same script can authenticate immediately. Pipe the
+# token via stdin so it is never interpolated into a shell string — same
+# quote-safe pattern used for the Keychain credential write on the host.
 if [[ -n "$GITHUB_TOKEN" ]]; then
-    echo "Configuring GitHub CLI authentication..."
-    sudo -u "$TUSER" -H /bin/bash -c "echo '$GITHUB_TOKEN' | /opt/homebrew/bin/gh auth login --with-token"
-    # Explicitly set credential helper (clear macOS osxkeychain default)
-    sudo -u "$TUSER" -H git config --global --unset-all credential.helper 2>/dev/null || true
-    sudo -u "$TUSER" -H git config --global credential.helper ""
-    sudo -u "$TUSER" -H git config --global --add credential.helper "/opt/homebrew/bin/gh auth git-credential"
+    echo "Seeding GitHub CLI authentication with host token..."
+    printf '%s\n' "$GITHUB_TOKEN" | sudo -u "$TUSER" -H /opt/homebrew/bin/gh auth login --with-token
+else
+    echo "No GITHUB_TOKEN forwarded — guest gh auth will be populated on first sync_claude_settings via hosts.yml. Dotfiles clone may fail if dotfiles repo is private."
 fi
 
-# Helper to convert SSH URLs to HTTPS
+# Helper to convert SSH URLs to HTTPS so the gh credential helper can serve
+# them. Handles: git@host:path, ssh://[user@]host[:port]/path. Already-HTTPS
+# URLs pass through unchanged. SSH host aliases from the host's ~/.ssh/config
+# (e.g. github.com-work) are rewritten verbatim — they won't resolve inside
+# the VM, but the resulting "could not resolve hostname" error is more
+# diagnostic than letting git attempt the SSH protocol with a missing key.
 ssh_to_https() {
     local url="$1"
+    # ssh://[user@]host[:port]/path   →   https://host/path
+    if [[ "$url" =~ ^ssh://(([^@]+)@)?([^:/]+)(:[0-9]+)?/(.+)$ ]]; then
+        echo "https://${BASH_REMATCH[3]}/${BASH_REMATCH[5]}"
+        return
+    fi
+    # git@host:path                   →   https://host/path
     if [[ "$url" =~ ^git@([^:]+):(.+)$ ]]; then
         echo "https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-    else
-        echo "$url"
+        return
     fi
+    # Already HTTPS or any other shape — pass through.
+    echo "$url"
 }
 
-# Clone and run dotfiles if specified
+# Clone and run dotfiles if specified. Failures here are warned about but
+# do NOT abort the base build — a private dotfiles repo combined with a
+# token-less host (web-flow / passkey-only gh auth) would otherwise kill
+# the install before Phase D ever runs. The user can re-run setup.sh
+# later with: tonka sh && cd ~/.dotfiles && ./setup.sh
 if [[ -n "$DOTFILES_REPO" ]]; then
     DOTFILES_URL=$(ssh_to_https "$DOTFILES_REPO")
     echo "Setting up dotfiles from: $DOTFILES_URL"
-    sudo -u "$TUSER" -H git clone "$DOTFILES_URL" /Users/$TUSER/.dotfiles
-    if [[ -f /Users/$TUSER/.dotfiles/setup.sh ]]; then
-        echo "Running dotfiles setup.sh..."
-        sudo -u "$TUSER" -H /bin/bash -c 'cd ~/.dotfiles && ./setup.sh'
+    if sudo -u "$TUSER" -H git clone "$DOTFILES_URL" /Users/$TUSER/.dotfiles; then
+        if [[ -f /Users/$TUSER/.dotfiles/setup.sh ]]; then
+            echo "Running dotfiles setup.sh..."
+            if ! sudo -u "$TUSER" -H /bin/bash -c 'cd ~/.dotfiles && ./setup.sh'; then
+                echo "Warning: dotfiles setup.sh failed. Re-run with: tonka sh && cd ~/.dotfiles && ./setup.sh"
+            fi
+        else
+            echo "Warning: No setup.sh found in dotfiles repo"
+        fi
     else
-        echo "Warning: No setup.sh found in dotfiles repo"
+        echo "Warning: dotfiles clone failed (auth not yet established?)."
+        echo "After base build, run 'gh auth login' on host, then 'tonka sh' and clone manually:"
+        echo "  git clone $DOTFILES_URL ~/.dotfiles && cd ~/.dotfiles && ./setup.sh"
     fi
 else
     echo "No TONKA_DOTFILES_REPO set, skipping dotfiles setup"

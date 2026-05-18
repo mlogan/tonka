@@ -67,6 +67,7 @@ Commands:
   stop                      Stop the tonka VM
   list                      List repos and projects
   cleanup                   Remove merged worktrees
+  auth-status               Show host + guest GitHub auth state
   rebuild-base              Rebuild the base VM from scratch
 
 Examples:
@@ -229,6 +230,25 @@ sync_claude_settings() {
     local ssh_opts="-o StrictHostKeyChecking=no -i $SSH_KEY"
     local changed=false
 
+    # Warn once per command if no usable GitHub auth on host. Don't die — the
+    # user may not need GitHub for this VM, but git operations inside it will
+    # likely fail without a token reaching the gh credential helper.
+    if [[ -z "${GITHUB_TOKEN:-}" ]] && ! gh auth status &>/dev/null; then
+        log_warn "No GitHub auth detected on host (no GITHUB_TOKEN, no gh auth). VM git operations may fail. Run 'gh auth login' to fix."
+    fi
+
+    # Best-effort precheck: warn (don't die) about broken symlinks under
+    # ~/.claude that would otherwise be silently skipped by the [[ -f ]]/
+    # [[ -d ]] guards below. Helps users debug dotclaude-staging worktrees
+    # that aren't currently checked out.
+    local p
+    for p in "$HOME/.claude/settings.json" "$HOME/.claude/skills" \
+             "$HOME/.claude/CLAUDE.md" "$HOME/.claude/plugins/installed_plugins.json"; do
+        if [[ -L "$p" ]] && [[ ! -e "$p" ]]; then
+            log_warn "Skipping broken symlink: $p -> $(readlink "$p" 2>/dev/null || echo unknown)"
+        fi
+    done
+
     ssh $ssh_opts "$TART_USER@$ip" "mkdir -p ~/.claude"
 
     # Sync settings.json if changed
@@ -242,11 +262,13 @@ sync_claude_settings() {
         fi
     fi
 
-    # Sync skills if changed
+    # Sync skills if changed. -L on find so BSD find descends into a
+    # symlinked top-level dir (e.g. dotclaude-staging) instead of returning
+    # zero files and collapsing the hash to md5-of-empty.
     if [[ -d "$HOME/.claude/skills" ]]; then
         local local_hash remote_hash
-        local_hash=$(find "$HOME/.claude/skills" -type f -exec md5 -q {} \; | sort | md5 -q)
-        remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "find ~/.claude/skills -type f -exec md5 -q {} \; 2>/dev/null | sort | md5 -q" || echo "")
+        local_hash=$(find -L "$HOME/.claude/skills" -type f -exec md5 -q {} \; | sort | md5 -q)
+        remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "find -L ~/.claude/skills -type f -exec md5 -q {} \; 2>/dev/null | sort | md5 -q" || echo "")
         if [[ "$local_hash" != "$remote_hash" ]]; then
             scp -r $ssh_opts "$HOME/.claude/skills" "$TART_USER@$ip":~/.claude/
             changed=true
@@ -318,15 +340,17 @@ sync_claude_settings() {
         fi
     fi
 
-    # Sync credentials from Keychain if changed
+    # Sync credentials from Keychain if changed. Pipe via stdin so the blob
+    # is never interpolated into a shell string — quote-safe regardless of
+    # content. Also enforces mode 600 on the destination.
     local creds
     creds=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || echo "")
     if [[ -n "$creds" ]]; then
         local local_hash remote_hash
-        local_hash=$(echo "$creds" | md5 -q)
+        local_hash=$(printf '%s' "$creds" | md5 -q)
         remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q ~/.claude/.credentials.json 2>/dev/null" || echo "")
         if [[ "$local_hash" != "$remote_hash" ]]; then
-            ssh $ssh_opts "$TART_USER@$ip" "echo '$creds' > ~/.claude/.credentials.json"
+            printf '%s' "$creds" | ssh $ssh_opts "$TART_USER@$ip" "cat > ~/.claude/.credentials.json && chmod 600 ~/.claude/.credentials.json"
             changed=true
         fi
     fi
@@ -599,6 +623,49 @@ cmd_sync() {
 
 cmd_start() {
     ensure_vm
+}
+
+cmd_auth_status() {
+    echo "== Host =="
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        echo "GITHUB_TOKEN env: set (length ${#GITHUB_TOKEN})"
+    else
+        echo "GITHUB_TOKEN env: unset"
+    fi
+    if command -v gh &>/dev/null; then
+        gh auth status 2>&1 | sed 's/^/  /' || true
+    else
+        echo "  gh: not installed on host"
+    fi
+    if [[ -f "$HOME/.config/gh/hosts.yml" ]]; then
+        echo "hosts.yml: present ($(md5 -q "$HOME/.config/gh/hosts.yml"))"
+    else
+        echo "hosts.yml: missing"
+    fi
+
+    if ! vm_is_running "$VM_NAME"; then
+        log_warn "VM not running — skipping guest checks. Start with: tonka start"
+        return
+    fi
+    local ip ssh_opts
+    ip=$(get_vm_ip "$VM_NAME")
+    ssh_opts="-o StrictHostKeyChecking=no -i $SSH_KEY"
+
+    echo
+    echo "== Guest =="
+    ssh $ssh_opts "$TART_USER@$ip" '
+        echo "credential.helper: $(git config --global --get credential.helper || echo unset)"
+        if [ -f ~/.config/gh/hosts.yml ]; then
+            echo "hosts.yml: present ($(md5 -q ~/.config/gh/hosts.yml))"
+        else
+            echo "hosts.yml: missing"
+        fi
+        if command -v gh >/dev/null 2>&1; then
+            /opt/homebrew/bin/gh auth status 2>&1 | sed "s/^/  /"
+        else
+            echo "  gh: not installed on guest"
+        fi
+    '
 }
 
 cmd_stop() {
@@ -945,6 +1012,9 @@ main() {
             ;;
         cleanup)
             cmd_cleanup
+            ;;
+        auth-status)
+            cmd_auth_status
             ;;
         rebuild-base)
             cmd_rebuild_base

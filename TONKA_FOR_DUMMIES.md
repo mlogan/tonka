@@ -185,6 +185,7 @@ tonka new my-feature
 | `tonka cleanup` | Prune merged worktrees |
 | `tonka start` | Start the VM (if stopped) |
 | `tonka stop` | Stop the VM |
+| `tonka auth-status` | Print host + guest GitHub auth state (run this first when clones fail inside the VM) |
 | `tonka rebuild-base` | Rebuild the base VM from scratch |
 
 ### Typical workflow
