@@ -387,15 +387,15 @@
     </li>
     <li>
       <strong>Git credential helper + (optional) gh auth</strong> — credential helper is <strong>always</strong> pinned to <code>gh auth git-credential</code> (so a token delivered later via Phase D's <code>hosts.yml</code> sync will work). If <code>GITHUB_TOKEN</code> was forwarded, also seed the guest's gh state via stdin-piped <code>gh auth login --with-token</code> so the very next step (dotfiles clone) can authenticate.
-      <span class="where">install.sh:130–147</span>
+      <span class="where">install.sh:130–135</span>
     </li>
     <li>
       <strong>Clone &amp; run dotfiles</strong> — if <code>TONKA_DOTFILES_REPO</code> is set: convert SSH URLs to HTTPS (so the gh helper is used), <code>git clone</code> to <code>~/.dotfiles</code>, then <code>cd ~/.dotfiles &amp;&amp; ./setup.sh</code>. Errors here propagate.
-      <span class="where">install.sh:151–191</span>
+      <span class="where">install.sh:173–219</span>
     </li>
     <li>
       <strong>Cleanup</strong> — delete <code>/tmp/tonka.pub</code>, <code>/tmp/tonka_key</code>, <code>/tmp/install.sh</code>.
-      <span class="where">install.sh:201–202</span>
+      <span class="where">install.sh:222–223</span>
     </li>
   </ol>
 </section>
@@ -486,7 +486,7 @@
       <tr><td>Dotfiles clone in Phase B</td><td>SSH URLs are rewritten to HTTPS by <code>ssh_to_https()</code>; uses the gh credential helper</td><td>The <code>GITHUB_TOKEN</code> forwarded into install.sh, or — if absent — the helper waits for Phase D to deliver a <code>hosts.yml</code></td></tr>
     </tbody>
   </table>
-  <p>The credential helper is now <strong>always</strong> configured on the guest (install.sh:130–138), regardless of whether the host had a token at base-build time. This means a fresh base VM built without <code>GITHUB_TOKEN</code> still gets a working helper, and Phase D delivers the actual token on the first command after the host runs <code>gh auth login</code>.</p>
+  <p>The credential helper is now <strong>always</strong> configured on the guest (install.sh:130–135), regardless of whether the host had a token at base-build time. This means a fresh base VM built without <code>GITHUB_TOKEN</code> still gets a working helper, and Phase D delivers the actual token on the first command after the host runs <code>gh auth login</code>.</p>
   <p>Use <code>tonka auth-status</code> to print the current host + guest auth state side by side.</p>
 </section>
 
@@ -557,7 +557,7 @@ Press Ctrl-D to leave.</code></pre>
       <tr><td><code>cmd_new</code></td><td>tonka:492–520</td><td><code>tonka new</code></td></tr>
       <tr><td><code>cmd_pr</code></td><td>tonka:522–580</td><td><code>tonka pr</code></td></tr>
       <tr><td><code>cmd_rebuild_base</code></td><td>tonka:884–912</td><td><code>tonka rebuild-base</code></td></tr>
-      <tr><td><code>install.sh</code> (guest)</td><td>guest/install.sh:1–203</td><td>run by create_base_vm over ssh</td></tr>
+      <tr><td><code>install.sh</code> (guest)</td><td>guest/install.sh:1–226</td><td>run by create_base_vm over ssh</td></tr>
     </tbody>
   </table>
 </section>

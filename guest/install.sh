@@ -127,27 +127,15 @@ fi
 echo "Enabling SSH..."
 sudo systemsetup -setremotelogin on
 
-# Always pin git's credential helper to gh, regardless of whether the host
-# forwarded a token. Without this, hosts using web-flow / passkey-only gh
-# auth would land here with no helper configured and the dotfiles HTTPS
-# clone (and later git operations) would fail with "could not read
-# Username". The token itself can arrive later via Phase D's hosts.yml sync.
-#
-# Write to BOTH system (/etc/gitconfig) and user (~/.gitconfig) levels:
-#   - User level applies during the dotfiles clone (which runs before the
-#     dotfiles' own .gitconfig is symlinked in).
-#   - System level is what survives once setup.sh symlinks the user's
-#     ~/.gitconfig from the dotfiles repo. Most dotfiles don't define
-#     credential.helper, so without a system-level fallback the nested
-#     `git submodule update` inside the dotclaude-style chain ends up
-#     with no helper at all and dies on "could not read Username for
-#     'https://github.com': Device not configured".
+# Pin git's credential helper to gh at the system level (/etc/gitconfig).
+# Putting it system-wide means it survives the dotfiles symlinking the
+# user's ~/.gitconfig: credential.helper is multi-valued, so git tries
+# the user-level entry (if any) AND the system-level one. Most dotfiles
+# .gitconfigs don't define credential.helper at all, in which case the
+# system-level setting is the only one in effect — exactly what we want.
 echo "Configuring git credential helper..."
 sudo git config --system --unset-all credential.helper 2>/dev/null || true
 sudo git config --system --add credential.helper "/opt/homebrew/bin/gh auth git-credential"
-sudo -u "$TUSER" -H git config --global --unset-all credential.helper 2>/dev/null || true
-sudo -u "$TUSER" -H git config --global credential.helper ""
-sudo -u "$TUSER" -H git config --global --add credential.helper "/opt/homebrew/bin/gh auth git-credential"
 
 # If the host forwarded a token, also seed the guest's gh auth state so the
 # dotfiles clone in this same script can authenticate immediately. Pipe the
