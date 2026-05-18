@@ -141,7 +141,7 @@ get_vm_ip() {
 
 wait_for_vm_ip() {
     local vm_name="$1"
-    local max_attempts=60
+    local max_attempts="${2:-60}"
     local attempt=0
     local ip=""
 
@@ -384,11 +384,16 @@ create_base_vm() {
     tart run --no-graphics "$BASE_VM_NAME" &
     local vm_pid=$!
 
-    # Wait for VM to boot and get IP
+    # Wait for VM to boot and get IP. Apple-silicon first-boot of a freshly
+    # pulled macOS-Tahoe-Xcode image can take 90–180s — the image has to
+    # do firstboot disk setup, prebuild caches, etc. Subsequent boots are
+    # much faster. Use a generous 180s polling window for the base build;
+    # the 60s default in wait_for_vm_ip stays for `ensure_vm` because by
+    # then the image is hot and the VM boots in <20s.
     log_info "Waiting for VM to boot..."
     sleep 30  # Initial boot delay
     local ip
-    ip=$(wait_for_vm_ip "$BASE_VM_NAME")
+    ip=$(wait_for_vm_ip "$BASE_VM_NAME" 180)
     log_info "VM IP: $ip"
 
     # Wait for SSH with default credentials (admin/admin)

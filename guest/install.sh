@@ -175,13 +175,36 @@ ssh_to_https() {
 # token-less host (web-flow / passkey-only gh auth) would otherwise kill
 # the install before Phase D ever runs. The user can re-run setup.sh
 # later with: tonka sh && cd ~/.dotfiles && ./setup.sh
+#
+# Both git invocations inherit GIT_CONFIG_* env vars that transparently
+# rewrite git@github.com:… URLs to https://github.com/… via git's
+# `url.<base>.insteadOf` mechanism. This is needed because the user's
+# dotfiles repo commonly has SSH-based submodules whose URLs we can't see
+# in advance (they're inside .gitmodules), and the VM only has the
+# tonka-specific SSH key (not the host SSH key authorized at GitHub) —
+# so SSH clones would fail with "Permission denied (publickey)". Routing
+# through HTTPS uses the gh credential helper that was just configured
+# above, which works for any repo the host's token has access to.
+# The env-var approach (GIT_CONFIG_COUNT) is scoped to these two git
+# invocations only — it does NOT pollute ~/.gitconfig, so work repos
+# cloned later via `tonka new-repo` keep their original SSH URLs.
 if [[ -n "$DOTFILES_REPO" ]]; then
     DOTFILES_URL=$(ssh_to_https "$DOTFILES_REPO")
     echo "Setting up dotfiles from: $DOTFILES_URL"
-    if sudo -u "$TUSER" -H git clone "$DOTFILES_URL" /Users/$TUSER/.dotfiles; then
+    if sudo -u "$TUSER" -H /bin/bash -c '
+        export GIT_CONFIG_COUNT=1
+        export GIT_CONFIG_KEY_0="url.https://github.com/.insteadOf"
+        export GIT_CONFIG_VALUE_0="git@github.com:"
+        git clone "$1" "$2"
+    ' bash "$DOTFILES_URL" "/Users/$TUSER/.dotfiles"; then
         if [[ -f /Users/$TUSER/.dotfiles/setup.sh ]]; then
             echo "Running dotfiles setup.sh..."
-            if ! sudo -u "$TUSER" -H /bin/bash -c 'cd ~/.dotfiles && ./setup.sh'; then
+            if ! sudo -u "$TUSER" -H /bin/bash -c '
+                export GIT_CONFIG_COUNT=1
+                export GIT_CONFIG_KEY_0="url.https://github.com/.insteadOf"
+                export GIT_CONFIG_VALUE_0="git@github.com:"
+                cd ~/.dotfiles && ./setup.sh
+            '; then
                 echo "Warning: dotfiles setup.sh failed. Re-run with: tonka sh && cd ~/.dotfiles && ./setup.sh"
             fi
         else
