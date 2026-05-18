@@ -308,11 +308,14 @@ sync_claude_settings() {
         local plugins
         plugins=$(jq -r '.plugins | keys[]' "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null || echo "")
 
-        # Ensure official marketplace is added
+        # Ensure official marketplace is added. -A forwards the host SSH
+        # agent so `claude plugin marketplace add` can clone marketplace
+        # repos defined with SSH URLs (the anthropics one uses HTTPS, but
+        # third-party marketplaces commonly use git@github.com:…).
         if [[ -n "$plugins" ]]; then
             if ! ssh $ssh_opts "$TART_USER@$ip" "grep -q claude-plugins-official ~/.claude/plugins/known_marketplaces.json 2>/dev/null"; then
                 log_info "Adding official plugin marketplace..."
-                ssh $ssh_opts "$TART_USER@$ip" "~/.local/bin/claude plugin marketplace add anthropics/claude-plugins-official" || true
+                ssh -A $ssh_opts "$TART_USER@$ip" "~/.local/bin/claude plugin marketplace add anthropics/claude-plugins-official" || true
             fi
         fi
 
@@ -321,7 +324,14 @@ sync_claude_settings() {
                 continue
             fi
             log_info "Installing plugin: $plugin"
-            ssh $ssh_opts "$TART_USER@$ip" "~/.local/bin/claude plugin install '$plugin'" || true
+            # -A forwards the host SSH agent so `claude plugin install`
+            # can git-clone plugins whose source URL is SSH
+            # (git@github.com:…), e.g. user-scope plugins like
+            # sui-pilot/codex-bridge/agentic-community-college. Without
+            # -A the clone fails with "Permission denied (publickey)"
+            # because the VM only has the tonka-generated SSH key,
+            # which isn't authorized at GitHub.
+            ssh -A $ssh_opts "$TART_USER@$ip" "~/.local/bin/claude plugin install '$plugin'" || true
             changed=true
         done
     fi
