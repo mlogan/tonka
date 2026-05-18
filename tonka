@@ -275,15 +275,24 @@ sync_claude_settings() {
         fi
     fi
 
-    # Sync gh auth credentials
-    if [[ -f "$HOME/.config/gh/hosts.yml" ]]; then
+    # Sync gh auth credentials. Use the *token* (which `gh auth token`
+    # abstracts over macOS-keychain vs hosts.yml storage) and reseed the
+    # guest via `gh auth login --with-token`. scp'ing hosts.yml directly
+    # would clobber the install-time token on the guest whenever the host
+    # stores credentials in the macOS keychain — which `gh` does by
+    # default on macOS, leaving hosts.yml with user identity but no
+    # `oauth_token` field. The previous scp-based sync looked successful
+    # (md5s matched after copy) but broke the guest's gh auth on every
+    # first command after rebuild-base.
+    local host_token
+    host_token=$(gh auth token 2>/dev/null || echo "")
+    if [[ -n "$host_token" ]]; then
         local local_hash remote_hash
-        local_hash=$(md5 -q "$HOME/.config/gh/hosts.yml")
-        remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q ~/.config/gh/hosts.yml 2>/dev/null" || echo "")
+        local_hash=$(printf '%s' "$host_token" | md5 -q)
+        remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "/opt/homebrew/bin/gh auth token 2>/dev/null | tr -d '\n' | md5 -q" 2>/dev/null || echo "")
         if [[ "$local_hash" != "$remote_hash" ]]; then
-            log_info "Syncing gh credentials..."
-            ssh $ssh_opts "$TART_USER@$ip" "mkdir -p ~/.config/gh"
-            scp $ssh_opts "$HOME/.config/gh/hosts.yml" "$TART_USER@$ip":~/.config/gh/hosts.yml
+            log_info "Syncing gh credentials (token rotation)..."
+            printf '%s\n' "$host_token" | ssh $ssh_opts "$TART_USER@$ip" "/opt/homebrew/bin/gh auth login --with-token --hostname github.com"
             changed=true
         fi
     fi
@@ -665,7 +674,10 @@ cmd_auth_status() {
         else
             echo "hosts.yml: missing"
         fi
-        if command -v gh >/dev/null 2>&1; then
+        # Probe the absolute path because non-interactive ssh on macOS
+        # gets a minimal PATH that excludes /opt/homebrew/bin, so
+        # `command -v gh` would false-negative even when gh is installed.
+        if [ -x /opt/homebrew/bin/gh ]; then
             /opt/homebrew/bin/gh auth status 2>&1 | sed "s/^/  /"
         else
             echo "  gh: not installed on guest"
