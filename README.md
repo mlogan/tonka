@@ -85,7 +85,9 @@ The basic workflow (`rebuild-base → new-repo → new`) is designed to work reg
 - **Dotfiles manager**: any tool is fine as long as the resulting repo has `setup.sh` at its root (stow, chezmoi, yadm, bare-git, plain symlinks — all work).
 - **`gh` / `jq` install location on the host**: any PATH-reachable install works. Inside the VM, Homebrew installs both at `/opt/homebrew/bin/...` by construction.
 - **`gh` auth state on the host**: env-only token, on-disk `hosts.yml`, web-flow / passkey. If no auth at all, `tonka` warns once and proceeds — git operations inside the VM may fail until you run `gh auth login` on the host.
-- **Token rotation**: a new host token is propagated to the guest on the next command (via `hosts.yml` resync).
+- **Token rotation**: a new host token is propagated to the guest on the next command. The host's token is read via `gh auth token` (which works whether the token lives in the macOS keychain or in `hosts.yml`) and reseeded on the guest via `gh auth login --with-token`.
+- **Private dotfiles repos with submodules**: SSH-only submodule URLs (`git@github.com:…`) inside the dotfiles tree are transparently rewritten to HTTPS during the base build, so the gh credential helper can serve them.
+- **User-scope plugins from SSH URLs**: `claude plugin install` inside the VM ssh-agent-forwards from the host, so plugins whose source URL is `git@github.com:…` clone successfully.
 
 If something looks broken, `tonka auth-status` prints the host + guest auth state for diagnosis.
 
