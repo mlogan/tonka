@@ -124,6 +124,8 @@ Commands:
                             Create a project worktree from a repo (defaults to default branch)
   pr <pr#> [repo]           Checkout a PR (creates project or opens existing)
   cp <src> [dest]           Copy a local file/directory into the VM (dest defaults to ~)
+  cp --from <project> <src> [dest]
+                            Copy a file/directory from a VM project to local (dest defaults to .)
   sync                      Fetch branches from VM repo to current local repo
   sh [project]              SSH into VM (optionally into a project)
   cl <project>              Run Claude in a project
@@ -143,6 +145,7 @@ Examples:
   tonka new feature-branch myproject
   tonka pr 123
   tonka cp ~/myfile.txt ~/projects/myproject/
+  tonka cp --from feature-branch results.txt
   tonka sh feature-branch
   tonka cl feature-branch
   tonka cursor feature-branch
@@ -710,13 +713,50 @@ cmd_pr() {
 }
 
 cmd_cp() {
-    local src="${1:-}"
-    local dest="${2:-}"
+    local from_project=""
+    local positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from)
+                from_project="${2:-}"
+                [[ -n "$from_project" ]] || die "Usage: tonka cp --from <project> <src> [dest]"
+                shift 2
+                ;;
+            --from=*)
+                from_project="${1#--from=}"
+                [[ -n "$from_project" ]] || die "Usage: tonka cp --from <project> <src> [dest]"
+                shift
+                ;;
+            *)
+                positional+=("$1")
+                shift
+                ;;
+        esac
+    done
 
-    if [[ -z "$src" ]]; then
-        die "Usage: tonka cp <src> [dest]"
+    local src="${positional[0]:-}"
+    local dest="${positional[1]:-}"
+
+    if [[ -n "$from_project" ]]; then
+        if [[ -z "$src" ]]; then
+            die "Usage: tonka cp --from <project> <src> [dest]"
+        fi
+        ensure_vm
+        local ip
+        ip=$(get_vm_ip "$VM_NAME")
+        if ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "test -d ~/projects/$from_project" 2>/dev/null; then
+            die "Project '$from_project' not found in VM. List with: tonka list"
+        fi
+        local local_dest="${dest:-.}"
+        log_info "Copying VM:~/projects/$from_project/$src to $local_dest..."
+        scp -r -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip:projects/$from_project/$src" "$local_dest"
+        log_info "Done."
+        return
     fi
 
+    if [[ -z "$src" ]]; then
+        die "Usage: tonka cp <src> [dest]  |  tonka cp --from <project> <src> [dest]"
+    fi
     if [[ ! -e "$src" ]]; then
         die "Source path does not exist: $src"
     fi
