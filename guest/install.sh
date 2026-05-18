@@ -132,7 +132,19 @@ sudo systemsetup -setremotelogin on
 # auth would land here with no helper configured and the dotfiles HTTPS
 # clone (and later git operations) would fail with "could not read
 # Username". The token itself can arrive later via Phase D's hosts.yml sync.
+#
+# Write to BOTH system (/etc/gitconfig) and user (~/.gitconfig) levels:
+#   - User level applies during the dotfiles clone (which runs before the
+#     dotfiles' own .gitconfig is symlinked in).
+#   - System level is what survives once setup.sh symlinks the user's
+#     ~/.gitconfig from the dotfiles repo. Most dotfiles don't define
+#     credential.helper, so without a system-level fallback the nested
+#     `git submodule update` inside the dotclaude-style chain ends up
+#     with no helper at all and dies on "could not read Username for
+#     'https://github.com': Device not configured".
 echo "Configuring git credential helper..."
+sudo git config --system --unset-all credential.helper 2>/dev/null || true
+sudo git config --system --add credential.helper "/opt/homebrew/bin/gh auth git-credential"
 sudo -u "$TUSER" -H git config --global --unset-all credential.helper 2>/dev/null || true
 sudo -u "$TUSER" -H git config --global credential.helper ""
 sudo -u "$TUSER" -H git config --global --add credential.helper "/opt/homebrew/bin/gh auth git-credential"
