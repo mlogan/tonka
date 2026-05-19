@@ -137,6 +137,32 @@ echo "Configuring git credential helper..."
 sudo git config --system --unset-all credential.helper 2>/dev/null || true
 sudo git config --system --add credential.helper "/opt/homebrew/bin/gh auth git-credential"
 
+# Install the in-guest `tonka-add` helper + `add` shell function so users
+# can pull in additional repos / scratch folders from inside a `tonka sh`
+# session without leaving the VM. The companion host-side
+# `ensure_guest_helpers` in `tonka` keeps these in sync on every command
+# so already-built VMs gain the feature without `tonka rebuild-base`.
+if [[ -f /tmp/tonka-add ]]; then
+    echo "Installing tonka-add helper..."
+    sudo install -m 0755 -o root -g wheel /tmp/tonka-add /usr/local/bin/tonka-add
+fi
+if [[ -f /tmp/tonka.zsh ]]; then
+    echo "Installing tonka.zsh shell function..."
+    sudo mkdir -p /usr/local/etc
+    sudo install -m 0644 -o root -g wheel /tmp/tonka.zsh /usr/local/etc/tonka.zsh
+    # Source it from /etc/zshrc behind a marker so updates are idempotent
+    # and we never duplicate the sourcing line on re-runs of install.sh.
+    if ! sudo grep -q 'TONKA-SHELL-HOOK' /etc/zshrc 2>/dev/null; then
+        echo "Wiring tonka.zsh into /etc/zshrc..."
+        sudo tee -a /etc/zshrc >/dev/null <<'EOF'
+
+# TONKA-SHELL-HOOK (managed by tonka — do not edit this block)
+[ -r /usr/local/etc/tonka.zsh ] && . /usr/local/etc/tonka.zsh
+# END-TONKA-SHELL-HOOK
+EOF
+    fi
+fi
+
 # If the host forwarded a token, also seed the guest's gh auth state so the
 # dotfiles clone in this same script can authenticate immediately. Pipe the
 # token via stdin so it is never interpolated into a shell string — same
@@ -221,6 +247,6 @@ fi
 
 # Clean up
 echo "Cleaning up..."
-rm -f /tmp/tonka.pub /tmp/tonka_key /tmp/install.sh
+rm -f /tmp/tonka.pub /tmp/tonka_key /tmp/install.sh /tmp/tonka-add /tmp/tonka.zsh
 
 echo "=== Base VM setup complete ==="
