@@ -15,6 +15,7 @@ Ephemeral tart-based sandboxes for running Claude Code with `--dangerously-skip-
 - **Dotfiles support** - Installs your dotfiles repo automatically
 - **Brew** - Automatically `brew install`s everything you have installed on the host OS
 - **Tools** - Easy install of Rust, Go, Node.js, Python if you need them.
+- **In-VM repo adds** - From inside `tonka sh`, type `add repo <git-url>` to clone another repo, create a fresh worktree, and `cd` into it — without leaving the VM.
 
 ## Prerequisites
 
@@ -69,7 +70,31 @@ tonka auth-status
 
 # Rebuild base VM (after config changes)
 tonka rebuild-base
+
+# Copy a non-git folder into the VM at ~/folders/<name>
+tonka folder add ~/notes/research
+tonka folder ls
 ```
+
+### Inside the VM (cross-repo work without leaving)
+
+While SSH'd into the VM (`tonka sh`), an `add` shell function is available:
+
+```bash
+# Clone another repo, create a fresh worktree, push branch, and cd into the worktree
+add repo git@github.com:me/other-project.git
+add repo https://github.com/me/other-project.git my-feature   # custom project name
+
+# Create a scratch folder (for cross-repo notes, downloads, etc.) and cd into it
+add folder scratch
+
+# See what's around
+add list
+```
+
+`add repo` mirrors `tonka new`: it clones into `~/repos/<repo>`, creates a
+worktree at `~/projects/<project>` on branch `<project>` off `origin/main`,
+pushes the branch, and cd's your shell into the worktree.
 
 ## How It Works
 

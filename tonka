@@ -56,6 +56,8 @@ Commands:
   new <project> [repo]      Create a project worktree from a repo
   pr <pr#> [repo]           Checkout a PR (creates project or opens existing)
   cp <src> [dest]           Copy a local file/directory into the VM (dest defaults to ~)
+  folder add <host-path>    Copy a non-git folder into VM ~/folders/<name>
+  folder ls                 List folders inside the VM
   sync                      Fetch branches from VM repo to current local repo
   sh [project]              SSH into VM (optionally into a project)
   cl <project>              Run Claude in a project
@@ -65,7 +67,7 @@ Commands:
   rm <project>              Remove a project (worktree) from the VM
   start                     Start the tonka VM
   stop                      Stop the tonka VM
-  list                      List repos and projects
+  list                      List repos, projects, and folders
   cleanup                   Remove merged worktrees
   auth-status               Show host + guest GitHub auth state
   rebuild-base              Rebuild the base VM from scratch
@@ -75,9 +77,15 @@ Examples:
   tonka new feature-branch myproject
   tonka pr 123
   tonka cp ~/myfile.txt ~/projects/myproject/
+  tonka folder add ~/notes/research
   tonka sh feature-branch
   tonka cl feature-branch
   tonka cursor feature-branch
+
+Inside the VM (via 'tonka sh'):
+  add repo <git-url> [project]   Clone repo + create worktree + cd into it
+  add folder <name>              Create ~/folders/<name> and cd into it
+  add list                       List repos, projects, and folders
 EOF
 }
 
@@ -374,9 +382,65 @@ sync_claude_settings() {
         fi
     fi
 
+    # Keep the in-guest helpers (tonka-add + /usr/local/etc/tonka.zsh)
+    # up to date so existing VMs gain new behaviors without rebuild-base.
+    if ensure_guest_helpers "$ip" "$ssh_opts"; then
+        :
+    else
+        changed=true
+    fi
+
     if [[ "$changed" == "true" ]]; then
         log_info "Claude settings synced."
     fi
+}
+
+# MD5-sync /usr/local/bin/tonka-add and /usr/local/etc/tonka.zsh from this
+# checkout to the running VM. Returns 0 if nothing changed, 1 if it pushed
+# updates (so the caller can flip the "changed" log flag).
+ensure_guest_helpers() {
+    local ip="$1"
+    local ssh_opts="$2"
+    local src_bin="$SCRIPT_DIR/guest/tonka-add"
+    local src_zsh="$SCRIPT_DIR/guest/tonka.zsh"
+    local updated=0
+
+    if [[ -f "$src_bin" ]]; then
+        local lh rh
+        lh=$(md5 -q "$src_bin")
+        rh=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q /usr/local/bin/tonka-add 2>/dev/null" || echo "")
+        if [[ "$lh" != "$rh" ]]; then
+            log_info "Syncing tonka-add helper to VM..."
+            scp $ssh_opts "$src_bin" "$TART_USER@$ip":/tmp/tonka-add
+            ssh $ssh_opts "$TART_USER@$ip" "sudo install -m 0755 -o root -g wheel /tmp/tonka-add /usr/local/bin/tonka-add && rm -f /tmp/tonka-add"
+            updated=1
+        fi
+    fi
+
+    if [[ -f "$src_zsh" ]]; then
+        local lh rh
+        lh=$(md5 -q "$src_zsh")
+        rh=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q /usr/local/etc/tonka.zsh 2>/dev/null" || echo "")
+        if [[ "$lh" != "$rh" ]]; then
+            log_info "Syncing tonka.zsh shell function to VM..."
+            scp $ssh_opts "$src_zsh" "$TART_USER@$ip":/tmp/tonka.zsh
+            ssh $ssh_opts "$TART_USER@$ip" 'sudo mkdir -p /usr/local/etc && sudo install -m 0644 -o root -g wheel /tmp/tonka.zsh /usr/local/etc/tonka.zsh && rm -f /tmp/tonka.zsh'
+            updated=1
+        fi
+        # Ensure /etc/zshrc sources it (idempotent — marker-guarded).
+        if ! ssh $ssh_opts "$TART_USER@$ip" "grep -q TONKA-SHELL-HOOK /etc/zshrc 2>/dev/null"; then
+            log_info "Wiring tonka.zsh into VM /etc/zshrc..."
+            ssh $ssh_opts "$TART_USER@$ip" "sudo tee -a /etc/zshrc >/dev/null <<'EOF'
+
+# TONKA-SHELL-HOOK (managed by tonka — do not edit this block)
+[ -r /usr/local/etc/tonka.zsh ] && . /usr/local/etc/tonka.zsh
+# END-TONKA-SHELL-HOOK
+EOF"
+            updated=1
+        fi
+    fi
+
+    return $(( updated == 0 ? 0 : 1 ))
 }
 
 create_base_vm() {
@@ -437,9 +501,11 @@ create_base_vm() {
         brew_casks=$(brew list --cask | tr '\n' ' ')
     fi
 
-    # Copy install script and SSH keys (using sshpass for password auth)
+    # Copy install script, guest helpers, and SSH keys (using sshpass for password auth)
     log_info "Copying install script to VM..."
     sshpass -p admin scp -o StrictHostKeyChecking=no "$SCRIPT_DIR/guest/install.sh" admin@"$ip":/tmp/install.sh
+    sshpass -p admin scp -o StrictHostKeyChecking=no "$SCRIPT_DIR/guest/tonka-add" admin@"$ip":/tmp/tonka-add
+    sshpass -p admin scp -o StrictHostKeyChecking=no "$SCRIPT_DIR/guest/tonka.zsh" admin@"$ip":/tmp/tonka.zsh
     sshpass -p admin scp -o StrictHostKeyChecking=no "$SSH_KEY.pub" admin@"$ip":/tmp/tonka.pub
     sshpass -p admin scp -o StrictHostKeyChecking=no "$SSH_KEY" admin@"$ip":/tmp/tonka_key
 
@@ -534,9 +600,16 @@ cmd_new() {
         log_info "Using repo: $repo_name"
     fi
 
-    log_info "Fetching origin/main and creating worktree '$project_name'..."
+    # Detect the default branch from the cloned repo's HEAD instead of
+    # hardcoding 'main' — many repos still use 'master' or another name.
+    local default_branch
+    default_branch=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "git -C ~/repos/$repo_name symbolic-ref --short HEAD 2>/dev/null" | tr -d '\r' || echo main)
+    default_branch="${default_branch:-main}"
+
+    log_info "Fetching origin/$default_branch and creating worktree '$project_name'..."
     ssh -A -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-        "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin main && git worktree add ~/projects/$project_name -b $project_name origin/main && cd ~/projects/$project_name && git push -u origin $project_name"
+        "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin $default_branch && git worktree add ~/projects/$project_name -b $project_name origin/$default_branch && cd ~/projects/$project_name && git push -u origin $project_name"
 
     log_info "Starting Claude in $project_name..."
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
@@ -624,6 +697,46 @@ cmd_cp() {
     log_info "Done."
 }
 
+cmd_folder() {
+    local sub="${1:-}"
+    case "$sub" in
+        add)
+            shift
+            local src="${1:-}"
+            [[ -z "$src" ]] && die "Usage: tonka folder add <host-path>"
+            [[ ! -d "$src" ]] && die "Not a directory: $src"
+            src="$(cd "$src" && pwd)"
+            local name
+            name="$(basename "$src")"
+            if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+                die "Folder name '$name' contains characters not allowed (A-Z a-z 0-9 . _ -)"
+            fi
+            ensure_vm
+            local ip
+            ip=$(get_vm_ip "$VM_NAME")
+            if ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "test -e ~/folders/$name" 2>/dev/null; then
+                die "~/folders/$name already exists in VM. Rename the host folder or remove the VM copy first."
+            fi
+            ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "mkdir -p ~/folders"
+            log_info "Copying $src to VM:~/folders/$name..."
+            scp -r -o StrictHostKeyChecking=no -i "$SSH_KEY" "$src" "$TART_USER@$ip:~/folders/$name"
+            log_info "Done. Inside the VM: cd ~/folders/$name"
+            ;;
+        ls|list|"")
+            ensure_vm
+            local ip
+            ip=$(get_vm_ip "$VM_NAME")
+            log_info "Folders:"
+            ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "ls ~/folders 2>/dev/null" | while read -r f; do
+                echo "  $f"
+            done
+            ;;
+        *)
+            die "Usage: tonka folder {add <host-path> | ls}"
+            ;;
+    esac
+}
+
 cmd_sync() {
     local repo_root
     repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || die "Not in a git repository"
@@ -647,6 +760,13 @@ cmd_sync() {
 
 cmd_start() {
     ensure_vm
+    # Also push the in-guest helpers (tonka-add + tonka.zsh) so users get
+    # them right after `tonka start` without needing to also run a sync-heavy
+    # command like `tonka new-repo` first.
+    local ip ssh_opts
+    ip=$(get_vm_ip "$VM_NAME")
+    ssh_opts="-o StrictHostKeyChecking=no -i $SSH_KEY"
+    ensure_guest_helpers "$ip" "$ssh_opts" || true
 }
 
 cmd_auth_status() {
@@ -721,6 +841,11 @@ cmd_list() {
     log_info "Projects:"
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "ls ~/projects 2>/dev/null" | while read -r p; do
         echo "  $p"
+    done
+
+    log_info "Folders:"
+    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "ls ~/folders 2>/dev/null" | while read -r f; do
+        echo "  $f"
     done
 }
 
@@ -1000,6 +1125,10 @@ main() {
         cp)
             shift
             cmd_cp "$@"
+            ;;
+        folder)
+            shift
+            cmd_folder "$@"
             ;;
         sync)
             cmd_sync
