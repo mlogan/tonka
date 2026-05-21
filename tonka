@@ -417,6 +417,11 @@ create_base_vm() {
         die "sshpass is required for base VM setup. Install with: brew install sshpass"
     fi
 
+    # SSH options for the password-auth bootstrap phase. PubkeyAuthentication=no
+    # skips pubkey offers entirely so smart-card keys in the user's agent don't
+    # trigger touch/PIN prompts that can time out and trip MaxAuthTries.
+    local sshpass_ssh_opts="-o StrictHostKeyChecking=no -o PubkeyAuthentication=no"
+
     ensure_ssh_key
 
     # Clone the base macOS image
@@ -444,7 +449,7 @@ create_base_vm() {
     log_info "Waiting for SSH to be ready..."
     local max_attempts=60
     local attempt=0
-    while ! sshpass -p admin ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no admin@"$ip" true 2>/dev/null; do
+    while ! sshpass -p admin ssh -o ConnectTimeout=2 $sshpass_ssh_opts admin@"$ip" true 2>/dev/null; do
         sleep 1
         ((attempt++))
         if [[ $attempt -ge $max_attempts ]]; then
@@ -465,18 +470,18 @@ create_base_vm() {
 
     # Copy install script and SSH keys (using sshpass for password auth)
     log_info "Copying install script to VM..."
-    sshpass -p admin scp -o StrictHostKeyChecking=no "$SCRIPT_DIR/guest/install.sh" admin@"$ip":/tmp/install.sh
-    sshpass -p admin scp -o StrictHostKeyChecking=no "$SSH_KEY.pub" admin@"$ip":/tmp/tonka.pub
-    sshpass -p admin scp -o StrictHostKeyChecking=no "$SSH_KEY" admin@"$ip":/tmp/tonka_key
+    sshpass -p admin scp $sshpass_ssh_opts "$SCRIPT_DIR/guest/install.sh" admin@"$ip":/tmp/install.sh
+    sshpass -p admin scp $sshpass_ssh_opts "$SSH_KEY.pub" admin@"$ip":/tmp/tonka.pub
+    sshpass -p admin scp $sshpass_ssh_opts "$SSH_KEY" admin@"$ip":/tmp/tonka_key
 
     # Copy Claude settings if they exist
     if [[ -f "$HOME/.claude/settings.json" ]]; then
         log_info "Copying Claude settings..."
-        sshpass -p admin scp -o StrictHostKeyChecking=no "$HOME/.claude/settings.json" admin@"$ip":/tmp/claude_settings.json
+        sshpass -p admin scp $sshpass_ssh_opts "$HOME/.claude/settings.json" admin@"$ip":/tmp/claude_settings.json
     fi
     if [[ -d "$HOME/.claude/skills" ]]; then
         log_info "Copying Claude skills..."
-        sshpass -p admin scp -r -o StrictHostKeyChecking=no "$HOME/.claude/skills" admin@"$ip":/tmp/claude_skills
+        sshpass -p admin scp -r $sshpass_ssh_opts "$HOME/.claude/skills" admin@"$ip":/tmp/claude_skills
     fi
 
     # Run install script with config
@@ -497,7 +502,7 @@ create_base_vm() {
     if [[ -n "$brew_casks" ]]; then
         install_env="$install_env BREW_CASKS='$brew_casks'"
     fi
-    sshpass -p admin ssh -o StrictHostKeyChecking=no admin@"$ip" "chmod +x /tmp/install.sh && $install_env /tmp/install.sh"
+    sshpass -p admin ssh $sshpass_ssh_opts admin@"$ip" "chmod +x /tmp/install.sh && $install_env /tmp/install.sh"
 
     log_info "Stopping base VM..."
     tart stop "$BASE_VM_NAME"
