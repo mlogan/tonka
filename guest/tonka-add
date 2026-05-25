@@ -1,0 +1,135 @@
+#!/bin/bash
+# tonka-add — in-guest helper for adding repos, projects, and folders to a
+# running tonka VM without leaving it. The companion shell function `add`
+# (defined in /usr/local/etc/tonka.zsh, sourced by /etc/zshrc) wraps this
+# script so the new directory is also cd'd in the caller's shell.
+#
+# To enable the auto-cd, the caller sets TONKA_ADD_CD_FILE=<path> and
+# tonka-add writes the absolute target directory into that file on success.
+# This keeps stdout/stderr clean so git clone/push progress passes through
+# live instead of being captured and reprinted out of order by the wrapper.
+
+set -euo pipefail
+
+ssh_to_https() {
+    local url="$1"
+    if [[ "$url" =~ ^ssh://(([^@]+)@)?([^:/]+)(:[0-9]+)?/(.+)$ ]]; then
+        echo "https://${BASH_REMATCH[3]}/${BASH_REMATCH[5]}"
+        return
+    fi
+    if [[ "$url" =~ ^git@([^:]+):(.+)$ ]]; then
+        echo "https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+        return
+    fi
+    echo "$url"
+}
+
+usage() {
+    cat <<'EOF'
+Usage: tonka-add <command> [args]
+
+  repo <git-url> [project]   Clone repo into ~/repos/<repo>, create a worktree at
+                             ~/projects/<project> (branch <project> off origin/main),
+                             push the branch, and print the worktree path.
+  folder <name>              Create ~/folders/<name> for scratch / cross-repo work.
+  list                       List ~/repos, ~/projects, and ~/folders.
+
+The `add` shell function (sourced from /etc/zshrc) wraps this script and
+cd's the caller's shell into the new directory.
+EOF
+}
+
+validate_name() {
+    local what="$1" name="$2"
+    if [[ ! "$name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "tonka-add: invalid $what name '$name' (allowed: A-Z a-z 0-9 . _ -)" >&2
+        return 1
+    fi
+}
+
+cmd_repo() {
+    local url="${1:-}"
+    local project="${2:-}"
+    if [[ -z "$url" ]]; then
+        echo "Usage: tonka-add repo <git-url> [project]" >&2
+        return 1
+    fi
+    url="$(ssh_to_https "$url")"
+    local repo
+    repo="$(basename "${url%.git}")"
+    [[ -z "$project" ]] && project="$repo"
+    validate_name repo "$repo" || return 1
+    validate_name project "$project" || return 1
+
+    if [[ -e "$HOME/repos/$repo" ]]; then
+        echo "tonka-add: ~/repos/$repo already exists. Pick a different repo, or rm it first." >&2
+        return 1
+    fi
+    if [[ -e "$HOME/projects/$project" ]]; then
+        echo "tonka-add: ~/projects/$project already exists. Pass a different <project> name." >&2
+        return 1
+    fi
+
+    mkdir -p "$HOME/repos"
+    echo "Cloning $url into ~/repos/$repo..."
+    git clone "$url" "$HOME/repos/$repo"
+
+    # Read the default branch from the just-cloned working copy (whose HEAD
+    # is on it) instead of hardcoding 'main' — many repos still use master.
+    local default_branch
+    default_branch=$(git -C "$HOME/repos/$repo" symbolic-ref --short HEAD 2>/dev/null || echo main)
+
+    mkdir -p "$HOME/projects"
+    echo "Creating worktree ~/projects/$project on branch '$project' off origin/$default_branch..."
+    if ! (cd "$HOME/repos/$repo" && git fetch origin "$default_branch" && \
+            git worktree add "$HOME/projects/$project" -b "$project" "origin/$default_branch"); then
+        echo "tonka-add: worktree creation failed. Cleaning up clone." >&2
+        rm -rf "$HOME/repos/$repo"
+        return 1
+    fi
+
+    if ! git -C "$HOME/projects/$project" push -u origin "$project" 2>&1; then
+        echo "tonka-add: warning — failed to push branch '$project' to origin. Worktree is ready locally." >&2
+    fi
+
+    [[ -n "${TONKA_ADD_CD_FILE:-}" ]] && printf '%s' "$HOME/projects/$project" > "$TONKA_ADD_CD_FILE"
+}
+
+cmd_folder() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        echo "Usage: tonka-add folder <name>" >&2
+        return 1
+    fi
+    validate_name folder "$name" || return 1
+    if [[ -e "$HOME/folders/$name" ]]; then
+        echo "tonka-add: ~/folders/$name already exists." >&2
+        return 1
+    fi
+    mkdir -p "$HOME/folders/$name"
+    echo "Created ~/folders/$name"
+    [[ -n "${TONKA_ADD_CD_FILE:-}" ]] && printf '%s' "$HOME/folders/$name" > "$TONKA_ADD_CD_FILE"
+}
+
+cmd_list() {
+    echo "Repos:"
+    ls "$HOME/repos" 2>/dev/null | sed 's/^/  /' || true
+    echo
+    echo "Projects:"
+    ls "$HOME/projects" 2>/dev/null | sed 's/^/  /' || true
+    echo
+    echo "Folders:"
+    ls "$HOME/folders" 2>/dev/null | sed 's/^/  /' || true
+}
+
+case "${1:-}" in
+    repo)            shift; cmd_repo "$@" ;;
+    folder)          shift; cmd_folder "$@" ;;
+    list)            cmd_list ;;
+    -h|--help|help|"") usage ;;
+    *)
+        echo "tonka-add: unknown command '$1'" >&2
+        usage >&2
+        exit 1
+        ;;
+esac
