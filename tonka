@@ -130,6 +130,7 @@ Commands:
   sh [project]              SSH into VM (optionally into a project)
   cl <project>              Run Claude in a project
   cursor <project>          Open project in Cursor/VS Code via SSH
+  vscode <project>          Open project in VS Code/Cursor via SSH
   diff <project>            Sync and diff project against default branch
   difftool <project>        Sync and open difftool for project against default branch
   rm <project>              Remove a project (worktree) from the VM
@@ -149,6 +150,7 @@ Examples:
   tonka sh feature-branch
   tonka cl feature-branch
   tonka cursor feature-branch
+  tonka vscode feature-branch
 EOF
 }
 
@@ -871,10 +873,12 @@ cmd_cl() {
         "cd ~/projects/$project_name && \$SHELL -i -l -c '[ -f ~/.claude.env ] && . ~/.claude.env; ~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec \$SHELL -l'"
 }
 
-cmd_cursor() {
-    local project_name="${1:-}"
+cmd_editor() {
+    # $1 = preferred editor: "cursor" or "code"
+    local preferred="$1"
+    local project_name="${2:-}"
     if [[ -z "$project_name" ]]; then
-        die "Usage: tonka cursor <project>"
+        die "Usage: tonka $preferred <project>"
     fi
 
     ensure_vm
@@ -886,23 +890,39 @@ cmd_cursor() {
         die "Project '$project_name' not found"
     fi
 
-    # Find editor: prefer cursor, fall back to code
-    local editor=""
     local cursor_app="/Applications/Cursor.app/Contents/Resources/app/bin/cursor"
     local code_app="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
 
-    if command -v cursor &>/dev/null; then
-        editor="cursor"
-    elif [[ -x "$cursor_app" ]]; then
-        editor="$cursor_app"
-    elif command -v code &>/dev/null; then
-        editor="code"
-        log_warn "Cursor not found, using VS Code"
-    elif [[ -x "$code_app" ]]; then
-        editor="$code_app"
-        log_warn "Cursor not found, using VS Code"
+    # Resolve the preferred editor, falling back to the other if missing.
+    local editor=""
+    if [[ "$preferred" == "cursor" ]]; then
+        if command -v cursor &>/dev/null; then
+            editor="cursor"
+        elif [[ -x "$cursor_app" ]]; then
+            editor="$cursor_app"
+        elif command -v code &>/dev/null; then
+            editor="code"
+            log_warn "Cursor not found, using VS Code"
+        elif [[ -x "$code_app" ]]; then
+            editor="$code_app"
+            log_warn "Cursor not found, using VS Code"
+        else
+            die "Neither Cursor nor VS Code found. Install one of them."
+        fi
     else
-        die "Neither Cursor nor VS Code found. Install one of them."
+        if command -v code &>/dev/null; then
+            editor="code"
+        elif [[ -x "$code_app" ]]; then
+            editor="$code_app"
+        elif command -v cursor &>/dev/null; then
+            editor="cursor"
+            log_warn "VS Code not found, using Cursor"
+        elif [[ -x "$cursor_app" ]]; then
+            editor="$cursor_app"
+            log_warn "VS Code not found, using Cursor"
+        else
+            die "Neither VS Code nor Cursor found. Install one of them."
+        fi
     fi
 
     # Use tonka SSH alias if configured, otherwise fall back to user@ip
@@ -913,6 +933,14 @@ cmd_cursor() {
 
     log_info "Opening $project_name in $editor via SSH..."
     "$editor" --remote "ssh-remote+$ssh_host" "/Users/$TART_USER/projects/$project_name"
+}
+
+cmd_cursor() {
+    cmd_editor cursor "$@"
+}
+
+cmd_vscode() {
+    cmd_editor code "$@"
 }
 
 cmd_diff_helper() {
@@ -1130,6 +1158,10 @@ main() {
         cursor)
             shift
             cmd_cursor "$@"
+            ;;
+        vscode)
+            shift
+            cmd_vscode "$@"
             ;;
         diff)
             shift
