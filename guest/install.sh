@@ -104,6 +104,14 @@ done
 echo "Installing Claude CLI..."
 sudo -u "$TUSER" -H bash -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
+# Schedule a daily `brew upgrade claude-code` via cron
+echo "Scheduling daily claude-code upgrade..."
+CLAUDE_UPGRADE_CRON='0 9 * * * /opt/homebrew/bin/brew upgrade claude-code >> /Users/'"$TUSER"'/.claude-code-upgrade.log 2>&1'
+sudo -u "$TUSER" -H bash -c '
+    existing=$(crontab -l 2>/dev/null | grep -v "brew upgrade claude-code" || true)
+    printf "%s\n%s\n" "$existing" "'"$CLAUDE_UPGRADE_CRON"'" | grep -v "^$" | crontab -
+'
+
 # Copy Claude settings if provided
 if [[ -f /tmp/claude_settings.json ]]; then
     echo "Configuring Claude settings..."
