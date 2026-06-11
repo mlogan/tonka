@@ -157,8 +157,8 @@ Commands:
   sync                      Fetch branches from VM repo to current local repo
   sh [project]              SSH into VM (optionally into a project)
   cl <project>              Run Claude in a project
-  cursor <project>          Open project in Cursor/VS Code via SSH
-  vscode <project>          Open project in VS Code/Cursor via SSH
+  cursor [project]          Open project in Cursor/VS Code via SSH (prompts if omitted)
+  vscode [project]          Open project in VS Code/Cursor via SSH (prompts if omitted)
   diff <project>            Sync and diff project against default branch
   difftool <project>        Sync and open difftool for project against default branch
   rm [-f] <project>...      Remove projects (worktrees) from the VM
@@ -1155,17 +1155,56 @@ cmd_cl() {
         "cd ~/projects/$project_name && \$SHELL -i -l -c '[ -f ~/.claude.env ] && . ~/.claude.env; ~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec \$SHELL -l'"
 }
 
+# Prompt the user to pick a project from the VM. Prints the chosen project
+# name to stdout; all prompts go to stderr so the result can be captured via
+# command substitution. Exits if there are no projects or the input is invalid.
+select_project() {
+    local ip="$1"
+    local prompt="${2:-Select a project:}"
+
+    local projects
+    projects=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "ls ~/projects 2>/dev/null" || echo "")
+
+    if [[ -z "$projects" ]]; then
+        die "No projects found. Create one with: tonka new <project-name> [repo-name]"
+    fi
+
+    local -a project_list
+    while IFS= read -r p; do
+        project_list+=("$p")
+    done <<< "$projects"
+
+    if [[ ${#project_list[@]} -eq 1 ]]; then
+        echo "${project_list[0]}"
+        return
+    fi
+
+    echo "$prompt" >&2
+    local i=1
+    for p in "${project_list[@]}"; do
+        echo "  $i) $p" >&2
+        ((i++))
+    done
+    read -p "Enter number: " -r choice
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#project_list[@]} ]]; then
+        echo "${project_list[$((choice-1))]}"
+    else
+        die "Invalid selection"
+    fi
+}
+
 cmd_editor() {
     # $1 = preferred editor: "cursor" or "code"
     local preferred="$1"
     local project_name="${2:-}"
-    if [[ -z "$project_name" ]]; then
-        die "Usage: tonka $preferred <project>"
-    fi
 
     ensure_vm
     local ip
     ip=$(get_vm_ip "$VM_NAME")
+
+    if [[ -z "$project_name" ]]; then
+        project_name=$(select_project "$ip" "Select a project to open:")
+    fi
 
     # Check if project exists
     if ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "test -d ~/projects/$project_name" 2>/dev/null; then
@@ -1453,38 +1492,9 @@ cmd_default() {
     local ip
     ip=$(get_vm_ip "$VM_NAME")
 
-    # Get list of projects
-    local projects
-    projects=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "ls ~/projects 2>/dev/null" || echo "")
-
-    if [[ -z "$projects" ]]; then
-        die "No projects found. Create one with: tonka new <project-name> [repo-name]"
-    fi
-
-    # Convert to array
-    local -a project_list
-    while IFS= read -r p; do
-        project_list+=("$p")
-    done <<< "$projects"
-
-    if [[ ${#project_list[@]} -eq 1 ]]; then
-        # Only one project, use it directly
-        cmd_cl "${project_list[0]}"
-    else
-        # Multiple projects, prompt user
-        echo "Select a project:"
-        local i=1
-        for p in "${project_list[@]}"; do
-            echo "  $i) $p"
-            ((i++))
-        done
-        read -p "Enter number: " -r choice
-        if [[ "$choice" =~ ^[0-9]+$ ]] && [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#project_list[@]} ]]; then
-            cmd_cl "${project_list[$((choice-1))]}"
-        else
-            die "Invalid selection"
-        fi
-    fi
+    local project_name
+    project_name=$(select_project "$ip")
+    cmd_cl "$project_name"
 }
 
 # Main command dispatcher
