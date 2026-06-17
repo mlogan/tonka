@@ -139,16 +139,44 @@ ssh_to_https() {
     fi
 }
 
-# Clone and run dotfiles if specified
+# Clone and run dotfiles if specified.
+# This is the last step, so a silent failure here yields a base VM with every
+# tool installed but no dotfiles. Fail loudly with actionable guidance instead.
 if [[ -n "$DOTFILES_REPO" ]]; then
     DOTFILES_URL=$(ssh_to_https "$DOTFILES_REPO")
     echo "Setting up dotfiles from: $DOTFILES_URL"
-    sudo -u "$TUSER" -H git clone "$DOTFILES_URL" /Users/$TUSER/.dotfiles
+
+    # The clone relies on the gh credential helper; confirm auth before trying so
+    # a private repo produces a clear message rather than an opaque git error.
+    if ! sudo -u "$TUSER" -H /opt/homebrew/bin/gh auth status &>/dev/null; then
+        echo "ERROR: TONKA_DOTFILES_REPO is set but 'gh' is not authenticated in the VM." >&2
+        echo "       The GitHub token was not synced; check GITHUB_TOKEN and 'gh auth' on the host." >&2
+        exit 1
+    fi
+
+    sudo rm -rf /Users/$TUSER/.dotfiles
+    clone_ok=""
+    for attempt in 1 2 3; do
+        if sudo -u "$TUSER" -H git clone "$DOTFILES_URL" /Users/$TUSER/.dotfiles; then
+            clone_ok=1
+            break
+        fi
+        echo "Dotfiles clone attempt $attempt failed; retrying..." >&2
+        sudo rm -rf /Users/$TUSER/.dotfiles
+        sleep 2
+    done
+    if [[ -z "$clone_ok" ]]; then
+        echo "ERROR: Failed to clone dotfiles repo: $DOTFILES_URL" >&2
+        echo "       If it is private, ensure the synced GitHub token has the 'repo' scope" >&2
+        echo "       (on the host: gh auth refresh -s repo) and that the repo path is correct." >&2
+        exit 1
+    fi
+
     if [[ -f /Users/$TUSER/.dotfiles/setup.sh ]]; then
         echo "Running dotfiles setup.sh..."
         sudo -u "$TUSER" -H /bin/bash -c 'cd ~/.dotfiles && ./setup.sh'
     else
-        echo "Warning: No setup.sh found in dotfiles repo"
+        echo "Warning: cloned dotfiles to ~/.dotfiles but no setup.sh at its root; nothing applied" >&2
     fi
 else
     echo "No TONKA_DOTFILES_REPO set, skipping dotfiles setup"

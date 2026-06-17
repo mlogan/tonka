@@ -27,6 +27,14 @@ TONKA_DISK_SIZE="${TONKA_DISK_SIZE:-}"
 TONKA_CPU="${TONKA_CPU:-$(sysctl -n hw.ncpu)}"
 TONKA_MEMORY="${TONKA_MEMORY:-$(( $(sysctl -n hw.memsize) * 5 / 8 / 1024 / 1024 ))}"
 
+# Verify gh is authenticated on the host before proceeding
+if command -v gh &>/dev/null; then
+    if ! gh auth status &>/dev/null; then
+        echo "Error: gh is not authenticated. Run 'gh auth login' first." >&2
+        exit 1
+    fi
+fi
+
 # Get GitHub token from gh CLI if not set
 if [[ -z "${GITHUB_TOKEN:-}" ]] && command -v gh &>/dev/null; then
     GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
@@ -138,6 +146,7 @@ Commands:
   stop                      Stop the tonka VM
   list                      List repos and projects
   cleanup                   Remove merged worktrees
+  resize-disk <size-gb>     Resize the VM disk and expand the filesystem
   rebuild-base              Rebuild the base VM from scratch
 
 Examples:
@@ -163,6 +172,10 @@ ensure_ssh_key() {
 
 update_ssh_config() {
     local ip="$1"
+    if [[ -z "$ip" ]]; then
+        log_warn "Could not determine VM IP; leaving ~/.ssh/config unchanged"
+        return
+    fi
     local ssh_config="$HOME/.ssh/config"
     local host_block="Host tonka
     HostName $ip
@@ -209,7 +222,11 @@ update_ssh_config() {
 
 get_vm_ip() {
     local vm_name="$1"
-    tart ip "$vm_name" --resolver arp 2>/dev/null || echo ""
+    # Prefer the arp resolver (the default DHCP lease method has been flaky),
+    # but fall back to the default if arp can't resolve the IP.
+    tart ip "$vm_name" --resolver arp 2>/dev/null \
+        || tart ip "$vm_name" 2>/dev/null \
+        || echo ""
 }
 
 wait_for_vm_ip() {
@@ -296,6 +313,11 @@ ensure_vm() {
         ip=$(get_vm_ip "$VM_NAME")
         update_ssh_config "$ip"
     fi
+
+    # Sync settings and gh credentials on every bring-up. The VM can't reach the
+    # host keyring, so without this any command on a fresh/restarted VM has no
+    # working gh auth. The sync is hash-gated, so it's a no-op when nothing changed.
+    sync_claude_settings
 }
 
 sync_claude_settings() {
@@ -328,15 +350,19 @@ sync_claude_settings() {
         fi
     fi
 
-    # Sync gh auth credentials
-    if [[ -f "$HOME/.config/gh/hosts.yml" ]]; then
+    # Sync gh auth credentials - pipe token into `gh auth login` on the VM,
+    # since the VM can't access the host's macOS keyring.
+    local gh_token
+    gh_token=$(gh auth token 2>/dev/null || echo "")
+    if [[ -n "$gh_token" ]]; then
         local local_hash remote_hash
-        local_hash=$(md5 -q "$HOME/.config/gh/hosts.yml")
-        remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q ~/.config/gh/hosts.yml 2>/dev/null" || echo "")
+        local_hash=$(printf '%s' "$gh_token" | md5 -q)
+        remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q ~/.config/gh/.token_hash 2>/dev/null" || echo "")
         if [[ "$local_hash" != "$remote_hash" ]]; then
             log_info "Syncing gh credentials..."
-            ssh $ssh_opts "$TART_USER@$ip" "mkdir -p ~/.config/gh"
-            scp $ssh_opts "$HOME/.config/gh/hosts.yml" "$TART_USER@$ip":~/.config/gh/hosts.yml
+            ssh $ssh_opts "$TART_USER@$ip" "echo '$gh_token' | /opt/homebrew/bin/gh auth login --with-token"
+            ssh $ssh_opts "$TART_USER@$ip" "/opt/homebrew/bin/gh auth setup-git"
+            ssh $ssh_opts "$TART_USER@$ip" "printf '%s' '$gh_token' | md5 -q > ~/.config/gh/.token_hash"
             changed=true
         fi
     fi
@@ -419,6 +445,9 @@ create_base_vm() {
         die "sshpass is required for base VM setup. Install with: brew install sshpass"
     fi
 
+    # Verify dotfiles access up front so we fail in seconds, not after the full build.
+    preflight_dotfiles
+
     ensure_ssh_key
 
     # Clone the base macOS image
@@ -499,7 +528,10 @@ create_base_vm() {
     if [[ -n "$brew_casks" ]]; then
         install_env="$install_env BREW_CASKS='$brew_casks'"
     fi
-    sshpass -p admin ssh -o StrictHostKeyChecking=no admin@"$ip" "chmod +x /tmp/install.sh && $install_env /tmp/install.sh"
+    if ! sshpass -p admin ssh -o StrictHostKeyChecking=no admin@"$ip" "chmod +x /tmp/install.sh && $install_env /tmp/install.sh"; then
+        kill $vm_pid 2>/dev/null || true
+        die "Base VM setup failed (see output above). The base VM was not built correctly; fix the reported issue and re-run."
+    fi
 
     log_info "Stopping base VM..."
     tart stop "$BASE_VM_NAME"
@@ -515,6 +547,40 @@ ssh_to_https() {
         echo "https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
     else
         echo "$url"
+    fi
+}
+
+# Extract "owner/repo" from an ssh or https git URL, stripping a trailing .git.
+git_repo_slug() {
+    local url="${1%.git}"
+    if [[ "$url" =~ ^git@[^:]+:(.+)$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$url" =~ ^https?://[^/]+/(.+)$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo ""
+    fi
+}
+
+# Fail fast (before the long base build) if a configured dotfiles repo can't be
+# reached with the host's gh credentials, which are the same ones synced to the VM.
+preflight_dotfiles() {
+    [[ -z "${TONKA_DOTFILES_REPO:-}" ]] && return 0
+    command -v gh &>/dev/null || return 0  # can't check without gh; VM clone will report
+
+    local slug
+    slug=$(git_repo_slug "$TONKA_DOTFILES_REPO")
+    if [[ -z "$slug" ]]; then
+        log_warn "Could not parse TONKA_DOTFILES_REPO ('$TONKA_DOTFILES_REPO'); skipping access check."
+        return 0
+    fi
+
+    log_info "Checking access to dotfiles repo '$slug'..."
+    if ! gh repo view "$slug" &>/dev/null; then
+        die "Cannot access dotfiles repo '$slug' (from TONKA_DOTFILES_REPO).
+  - If it is private, ensure your token has the 'repo' scope: gh auth refresh -s repo
+  - Verify the repo path in ~/.tonka.conf is correct.
+  - To build without dotfiles, unset TONKA_DOTFILES_REPO in ~/.tonka.conf."
     fi
 }
 
@@ -630,7 +696,6 @@ cmd_new() {
     fi
 
     ensure_vm
-    sync_claude_settings
     local ip
     ip=$(get_vm_ip "$VM_NAME")
 
@@ -649,7 +714,7 @@ cmd_new() {
         default_branch=$(get_default_branch_ssh "$ip" "$repo_name")
         log_info "Fetching origin/$default_branch and creating worktree '$project_name'..."
         ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-            "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin $default_branch && git worktree add ~/projects/$project_name -b $project_name origin/$default_branch && cd ~/projects/$project_name && git push -u origin $project_name"
+            "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin $default_branch && git worktree add ~/projects/$project_name -b $project_name origin/$default_branch"
     fi
 
     log_info "Starting Claude in $project_name..."
@@ -666,7 +731,6 @@ cmd_pr() {
     fi
 
     ensure_vm
-    sync_claude_settings
     local ip
     ip=$(get_vm_ip "$VM_NAME")
 
@@ -864,7 +928,6 @@ cmd_cl() {
         die "Usage: tonka cl <project>"
     fi
     ensure_vm
-    sync_claude_settings
     local ip
     ip=$(get_vm_ip "$VM_NAME")
 
@@ -1038,6 +1101,43 @@ cmd_rm() {
     log_info "Project '$project_name' removed."
 }
 
+cmd_resize_disk() {
+    local size="${1:-}"
+    if [[ -z "$size" ]]; then
+        die "Usage: tonka resize-disk <size-in-gb>"
+    fi
+
+    if ! [[ "$size" =~ ^[0-9]+$ ]]; then
+        die "Disk size must be a number (in GB)"
+    fi
+
+    local was_running=false
+    if vm_is_running "$VM_NAME"; then
+        was_running=true
+        log_info "Stopping VM to resize disk..."
+        tart stop "$VM_NAME"
+        sleep 2
+    fi
+
+    log_info "Resizing disk to ${size}GB..."
+    tart set "$VM_NAME" --disk-size "$size"
+
+    log_info "Starting VM..."
+    tart run --no-graphics "$VM_NAME" &
+    disown $! 2>/dev/null || true
+    sleep 15
+    local ip
+    ip=$(wait_for_vm_ip "$VM_NAME")
+    wait_for_ssh "$ip"
+    update_ssh_config "$ip"
+
+    log_info "Expanding APFS container inside VM..."
+    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "sudo diskutil apfs resizeContainer disk0 0"
+
+    log_info "Disk resized to ${size}GB and filesystem expanded."
+}
+
 cmd_rebuild_base() {
     if vm_exists "$BASE_VM_NAME"; then
         if vm_is_running "$BASE_VM_NAME"; then
@@ -1177,6 +1277,10 @@ main() {
             ;;
         cleanup)
             cmd_cleanup
+            ;;
+        resize-disk)
+            shift
+            cmd_resize_disk "$@"
             ;;
         rebuild-base)
             cmd_rebuild_base
