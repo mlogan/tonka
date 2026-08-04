@@ -190,6 +190,16 @@ else
     echo "No TONKA_DOTFILES_REPO set, skipping dotfiles setup"
 fi
 
+# Load ~/.claude.env (e.g. CLAUDE_CODE_OAUTH_TOKEN from `tonka setup-token`) in
+# every shell. Appended after dotfiles setup so it can't be clobbered by it;
+# zsh reads .zshenv for every invocation, interactive or not.
+echo "Configuring ~/.claude.env sourcing..."
+sudo -u "$TUSER" -H bash -c 'cat >> ~/.zshenv <<'"'"'EOF'"'"'
+
+# tonka: load ~/.claude.env
+if [ -f "$HOME/.claude.env" ]; then set -a; . "$HOME/.claude.env"; set +a; fi
+EOF'
+
 # Clean up
 echo "Cleaning up..."
 rm -f /tmp/tonka.pub /tmp/tonka_key /tmp/install.sh
