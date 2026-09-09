@@ -130,6 +130,9 @@ Commands:
   new-repo <repo-path>      Clone a git repo into the VM
   new <project> [repo] [--branch <branch>]
                             Create a project worktree from a repo (defaults to default branch)
+  build [options] <prompt>  Build a feature end-to-end: new worktree, headless
+                            Claude, PR, then remove the worktree
+                            Options: --repo <repo>, --name <project>, --keep
   pr <pr#> [repo]           Checkout a PR (creates project or opens existing)
   cp <src> [dest]           Copy a local file/directory into the VM (dest defaults to ~)
   cp --from <project> <src> [dest]
@@ -153,6 +156,8 @@ Examples:
   tonka fork https://github.com/org/repo
   tonka new-repo ~/dev/myproject
   tonka new feature-branch myproject
+  tonka build "Add a --json flag to the status command"
+  tonka build --repo myproject - < prompt.txt
   tonka pr 123
   tonka cp ~/myfile.txt ~/projects/myproject/
   tonka cp --from feature-branch results.txt
@@ -712,14 +717,208 @@ cmd_new() {
     else
         local default_branch
         default_branch=$(get_default_branch_ssh "$ip" "$repo_name")
-        log_info "Fetching origin/$default_branch and creating worktree '$project_name'..."
-        ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-            "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin $default_branch && git worktree add ~/projects/$project_name -b $project_name origin/$default_branch"
+        create_worktree_from_branch "$ip" "$repo_name" "$project_name" "$default_branch"
     fi
 
     log_info "Starting Claude in $project_name..."
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
         "cd ~/projects/$project_name && \$SHELL -i -l -c '[ -f ~/.claude.env ] && . ~/.claude.env; ~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec \$SHELL -l'"
+}
+
+# Turn free text into a branch/directory name: lowercase, first five words,
+# alphanumerics and hyphens only.
+slugify() {
+    echo "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' \
+        | sed -E 's/^-+//; s/-+$//' | cut -d- -f1-5 | cut -c1-40 | sed -E 's/-+$//'
+}
+
+# Create ~/projects/<project> as a new branch <project> off origin/<branch>.
+create_worktree_from_branch() {
+    local ip="$1" repo_name="$2" project_name="$3" base_branch="$4"
+    log_info "Fetching origin/$base_branch and creating worktree '$project_name'..."
+    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "mkdir -p ~/projects && cd ~/repos/$repo_name && git fetch origin $base_branch && git worktree add ~/projects/$project_name -b $project_name origin/$base_branch"
+}
+
+# Compose the headless prompt for `tonka build`: the user's task plus the
+# ground rules Claude needs when nobody is there to answer questions.
+build_prompt() {
+    local project_name="$1" base_branch="$2" skills="$3" task="$4"
+    local skills_para
+    if [[ -n "$skills" ]]; then
+        skills_para="This repository has project skills in .claude/skills: $(echo "$skills" | tr '\n' ' ' | sed -E 's/ +$//').
+Before starting, read each skill's SKILL.md and invoke every skill that is relevant to this task at the appropriate point in the work (for example skills for building, testing, debugging, review, or PR creation). Prefer a repo skill over an ad-hoc approach whenever one applies."
+    else
+        skills_para="This repository has no .claude/skills directory; use your globally installed skills where relevant."
+    fi
+    cat <<PROMPT
+You are working in a fresh git worktree at ~/projects/$project_name on branch '$project_name', which was just created from origin/$base_branch. Do all work on this branch. Do not create another branch or switch branches.
+
+# Task
+
+$task
+
+# Requirements
+
+1. $skills_para
+2. Implement the task completely, including tests where appropriate, and make sure the project builds and the relevant tests pass.
+3. Commit your work with clear commit messages.
+4. Push the branch to origin and open a pull request against $base_branch. If a repo skill covers PR creation, use it; otherwise use 'gh pr create'. The PR description should summarize the change and how it was tested.
+5. When finished, the final line of your reply must be the PR URL.
+
+You are running non-interactively: nobody can answer questions, so make reasonable decisions yourself and record any assumptions in the PR description.
+PROMPT
+}
+
+cmd_build() {
+    local repo_name="" project_name="" keep=false
+    local -a words=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --repo|-r)
+                repo_name="${2:-}"
+                [[ -n "$repo_name" ]] || die "--repo requires a value"
+                shift 2
+                ;;
+            --repo=*)
+                repo_name="${1#*=}"
+                shift
+                ;;
+            --name|-n)
+                project_name="${2:-}"
+                [[ -n "$project_name" ]] || die "--name requires a value"
+                shift 2
+                ;;
+            --name=*)
+                project_name="${1#*=}"
+                shift
+                ;;
+            --keep)
+                keep=true
+                shift
+                ;;
+            -)
+                words+=("$(cat)")
+                shift
+                ;;
+            -*)
+                die "Unknown option: $1"
+                ;;
+            *)
+                words+=("$1")
+                shift
+                ;;
+        esac
+    done
+    local task="${words[*]:-}"
+    if [[ -z "${task//[[:space:]]/}" ]]; then
+        die "Usage: tonka build [--repo <repo>] [--name <project>] [--keep] <prompt>
+       tonka build [options] - < prompt.txt"
+    fi
+
+    ensure_vm
+    local ip
+    ip=$(get_vm_ip "$VM_NAME")
+
+    if [[ -z "$repo_name" ]]; then
+        repo_name=$(resolve_default_repo "$ip")
+        log_info "Using repo: $repo_name"
+    fi
+    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "test -d ~/repos/$repo_name" \
+        || die "Repo '$repo_name' not found in VM. Add it with: tonka new-repo <repo-path>"
+
+    local default_branch
+    default_branch=$(get_default_branch_ssh "$ip" "$repo_name")
+
+    # Pick a project name that is free both as a worktree and as a branch.
+    if [[ -z "$project_name" ]]; then
+        local slug
+        slug=$(slugify "$task")
+        [[ -n "$slug" ]] || slug="task"
+        project_name="build-$slug"
+        local n=2
+        while ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+                "test -e ~/projects/$project_name || git -C ~/repos/$repo_name rev-parse --verify -q refs/heads/$project_name >/dev/null"; do
+            project_name="build-$slug-$n"
+            ((n++))
+        done
+    fi
+
+    create_worktree_from_branch "$ip" "$repo_name" "$project_name" "$default_branch"
+
+    local skills
+    skills=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "ls ~/projects/$project_name/.claude/skills 2>/dev/null" || true)
+    if [[ -n "$skills" ]]; then
+        log_info "Repo skills: $(echo "$skills" | tr '\n' ' ')"
+    else
+        log_warn "No .claude/skills directory in '$repo_name'"
+    fi
+
+    # The prompt travels over stdin so no quoting is needed for its contents.
+    build_prompt "$project_name" "$default_branch" "$skills" "$task" \
+        | ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+            "mkdir -p /tmp/tonka-build && cat > /tmp/tonka-build/$project_name.prompt"
+    scp -q -o StrictHostKeyChecking=no -i "$SSH_KEY" "$SCRIPT_DIR/guest/build.sh" "$TART_USER@$ip":/tmp/tonka-build/build.sh
+
+    log_info "Running Claude in $project_name (log: VM:/tmp/tonka-build/$project_name.log)..."
+    local claude_status=0
+    # -t so Ctrl-C reaches the remote session instead of just killing ssh.
+    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
+        "bash /tmp/tonka-build/build.sh '$project_name'" || claude_status=$?
+    if [[ $claude_status -ne 0 ]]; then
+        log_warn "Claude exited with status $claude_status"
+    fi
+
+    local pr_url
+    pr_url=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "cd ~/projects/$project_name && /opt/homebrew/bin/gh pr view '$project_name' --json url -q .url 2>/dev/null" || true)
+
+    if [[ -z "$pr_url" ]]; then
+        local session_id
+        session_id=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+            "jq -r 'select(.type == \"system\" and .subtype == \"init\") | .session_id' /tmp/tonka-build/$project_name.log 2>/dev/null | head -1" || true)
+        log_error "No PR was created for branch '$project_name'. The worktree was kept."
+        log_error "  Inspect:  tonka sh $project_name"
+        if [[ -n "$session_id" ]]; then
+            log_error "  Resume:   tonka sh $project_name, then: claude --resume $session_id"
+        fi
+        log_error "  Discard:  tonka rm $project_name"
+        return 1
+    fi
+
+    log_info "PR created: $pr_url"
+    if [[ "$keep" == "true" ]]; then
+        log_info "Keeping worktree '$project_name' (--keep)."
+        return 0
+    fi
+
+    # Only tear down a worktree whose work is entirely on the remote branch.
+    local state
+    state=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "
+        cd ~/projects/$project_name || exit 1
+        git fetch -q origin '$project_name' 2>/dev/null
+        if [ -n \"\$(git status --porcelain)\" ]; then echo dirty; exit 0; fi
+        if [ \"\$(git rev-parse HEAD)\" != \"\$(git rev-parse origin/$project_name 2>/dev/null)\" ]; then echo unpushed; exit 0; fi
+        echo clean")
+    case "$state" in
+        clean) ;;
+        unpushed)
+            log_info "Pushing commits that were not yet on origin/$project_name..."
+            ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+                "cd ~/projects/$project_name && git push -q origin '$project_name'" \
+                || { log_warn "Push failed; keeping worktree '$project_name'."; return 1; }
+            ;;
+        *)
+            log_warn "Worktree '$project_name' has uncommitted changes; keeping it. Inspect with: tonka sh $project_name"
+            return 1
+            ;;
+    esac
+
+    log_info "Removing worktree '$project_name'..."
+    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "cd ~/repos/$repo_name && git worktree remove ~/projects/$project_name && git branch -D '$project_name' >/dev/null"
+    log_info "Done. $pr_url"
 }
 
 cmd_pr() {
@@ -1226,6 +1425,10 @@ main() {
         new)
             shift
             cmd_new "$@"
+            ;;
+        build)
+            shift
+            cmd_build "$@"
             ;;
         pr)
             shift
