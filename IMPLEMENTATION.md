@@ -8,7 +8,8 @@ Branch: `mlogan-build-cmd`
 - `create_worktree_from_branch` helper shared with `tonka new`
 - usage text + dispatcher
 
-## Remaining
 - Docs: README.md, TONKA_FOR_DUMMIES.md
-- Dry-run test in VM (no-PR path)
+- Dry-run test in VM (sui repo, prompt forbade commits/PR): worktree creation, skill discovery, prompt delivery, progress stream, and the no-PR path all verified; teardown state check verified by hand (unpushed/dirty)
+
+## Remaining
 - Full PR-path run (creates a real PR; left for the user)
