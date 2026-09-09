@@ -170,6 +170,26 @@ If the repo name is omitted and you only have one repo, Tonka picks it automatic
 tonka new my-feature
 ```
 
+### Hands-off builds with `tonka build`
+
+If you already know what you want and don't need to watch, hand the whole job
+to Tonka:
+
+```bash
+tonka build "Add a --json flag to the status command"
+tonka build --repo myproject --name json-flag "Add a --json flag ..."
+tonka build - < prompt.txt          # read the prompt from stdin
+```
+
+Tonka creates a worktree off the default branch (named `build-<slug of your
+prompt>` unless you pass `--name`), runs Claude headlessly with your prompt,
+and streams what it is doing to your terminal. The prompt tells Claude to read
+the repo's `.claude/skills` and use every relevant one, then commit, push, and
+open a PR. When the PR exists, Tonka prints its URL and removes the worktree
+(and the local branch). If no PR was created, the worktree is kept and Tonka
+prints how to inspect it, resume the session, or discard it. Pass `--keep` to
+keep the worktree even after the PR is created.
+
 ---
 
 ## 8. Day-to-Day Commands
@@ -180,6 +200,7 @@ tonka new my-feature
 | `tonka cl <project>` | Launch Claude in a specific project |
 | `tonka sh [project]` | SSH into the VM (optionally into a project directory) |
 | `tonka new <project> [repo]` | Create a new worktree + launch Claude |
+| `tonka build <prompt>` | Unattended: new worktree, headless Claude, PR, then remove the worktree |
 | `tonka new-repo <path>` | Clone a local repo's remote into the VM |
 | `tonka list` | List all repos and projects in the VM |
 | `tonka cleanup` | Prune merged worktrees |
@@ -201,6 +222,9 @@ tonka new fix-login-bug myproject   # new worktree + Claude
 
 tonka cl fix-login-bug              # re-enter the same project later
 tonka                               # or just pick from a list
+
+# Hands-off: worktree -> Claude -> PR -> worktree removed
+tonka build "Add a --json flag to the status command"
 
 # Housekeeping
 tonka cleanup                       # remove merged worktrees

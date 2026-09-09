@@ -47,6 +47,9 @@ tonka new-repo ~/dev/myproject
 # Create a project worktree and launch Claude
 tonka new my-feature myproject
 
+# Build a feature end-to-end without supervision: worktree -> Claude -> PR
+tonka build "Add a --json flag to the status command"
+
 # Launch Claude in a project (or select from list)
 tonka
 tonka cl my-feature
@@ -67,6 +70,33 @@ tonka cleanup
 # Rebuild base VM (after config changes)
 tonka rebuild-base
 ```
+
+## Building a feature end-to-end
+
+`tonka build` runs the whole loop unattended:
+
+```bash
+tonka build "Add a --json flag to the status command"
+tonka build --repo myproject --name json-flag "Add a --json flag ..."
+tonka build - < prompt.txt          # read the prompt from stdin
+```
+
+It creates a fresh worktree off the default branch, runs Claude headlessly in
+it with your prompt, and expects Claude to commit, push, and open a PR. The
+prompt tells Claude to read every skill in the repo's `.claude/skills` directory
+and invoke the relevant ones (tests, review, PR creation, ...). Progress is
+streamed to your terminal; the raw session log is kept at
+`/tmp/tonka-build/<project>.log` in the VM.
+
+When a PR exists for the branch, tonka prints its URL, pushes any commits that
+did not make it to origin, and removes the worktree and local branch. Pass
+`--keep` to keep the worktree. If no PR was created, the worktree is kept and
+tonka prints how to inspect it, resume the Claude session, or discard it.
+
+Options:
+- `--repo <repo>` - repo to build in (default: `TONKA_DEFAULT_REPO` or first repo)
+- `--name <project>` - worktree/branch name (default: `build-<slug of prompt>`)
+- `--keep` - keep the worktree after the PR is created
 
 ## How It Works
 
