@@ -144,7 +144,7 @@ Commands:
   vscode <project>          Open project in VS Code/Cursor via SSH
   diff <project>            Sync and diff project against default branch
   difftool <project>        Sync and open difftool for project against default branch
-  rm <project>              Remove a project (worktree) from the VM
+  rm <project>...           Remove projects (worktrees) from the VM
   start                     Start the tonka VM
   stop                      Stop the tonka VM
   list                      List repos and projects
@@ -1253,9 +1253,8 @@ cmd_difftool() {
 }
 
 cmd_rm() {
-    local project_name="${1:-}"
-    if [[ -z "$project_name" ]]; then
-        die "Usage: tonka rm <project>"
+    if [[ $# -eq 0 ]]; then
+        die "Usage: tonka rm <project>..."
     fi
 
     if ! vm_is_running "$VM_NAME"; then
@@ -1265,25 +1264,44 @@ cmd_rm() {
     local ip
     ip=$(get_vm_ip "$VM_NAME")
 
-    # Check if project exists
-    if ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "test -d ~/projects/$project_name" 2>/dev/null; then
-        die "Project '$project_name' not found"
-    fi
+    # Validate every name up front so a typo doesn't leave a partial removal.
+    local project_name
+    for project_name in "$@"; do
+        if ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "test -d ~/projects/$project_name" 2>/dev/null; then
+            die "Project '$project_name' not found"
+        fi
+    done
 
-    # Get branch name for this worktree
+    local failed=0
+    for project_name in "$@"; do
+        rm_project "$ip" "$project_name" || failed=1
+    done
+    return "$failed"
+}
+
+rm_project() {
+    local ip="$1"
+    local project_name="$2"
+
     local branch_name
     branch_name=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
         "cd ~/projects/$project_name && git branch --show-current" 2>/dev/null) || branch_name=""
 
     # Find the repo this worktree belongs to
     local repo_path
-    repo_path=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-        "cd ~/projects/$project_name && git rev-parse --path-format=absolute --git-common-dir" 2>/dev/null) || die "Could not determine repo"
+    if ! repo_path=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "cd ~/projects/$project_name && git rev-parse --path-format=absolute --git-common-dir" 2>/dev/null); then
+        log_error "Could not determine repo for '$project_name'"
+        return 1
+    fi
     repo_path=$(dirname "$repo_path")
 
     log_info "Removing worktree '$project_name'..."
-    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-        "cd '$repo_path' && git worktree remove ~/projects/$project_name"
+    if ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+        "cd '$repo_path' && git worktree remove ~/projects/$project_name"; then
+        log_error "Failed to remove worktree '$project_name'"
+        return 1
+    fi
 
     # Offer to delete the branch if it exists
     if [[ -n "$branch_name" ]]; then
