@@ -144,7 +144,7 @@ Commands:
   vscode <project>          Open project in VS Code/Cursor via SSH
   diff <project>            Sync and diff project against default branch
   difftool <project>        Sync and open difftool for project against default branch
-  rm <project>...           Remove projects (worktrees) from the VM
+  rm [-f] <project>...      Remove projects (worktrees) from the VM
   start                     Start the tonka VM
   stop                      Stop the tonka VM
   list                      List repos and projects
@@ -1253,8 +1253,18 @@ cmd_difftool() {
 }
 
 cmd_rm() {
-    if [[ $# -eq 0 ]]; then
-        die "Usage: tonka rm <project>..."
+    local force=""
+    local projects=()
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -f|--force) force="--force" ;;
+            -*) die "Unknown option: $arg" ;;
+            *) projects+=("$arg") ;;
+        esac
+    done
+    if [[ ${#projects[@]} -eq 0 ]]; then
+        die "Usage: tonka rm [-f] <project>..."
     fi
 
     if ! vm_is_running "$VM_NAME"; then
@@ -1266,15 +1276,15 @@ cmd_rm() {
 
     # Validate every name up front so a typo doesn't leave a partial removal.
     local project_name
-    for project_name in "$@"; do
+    for project_name in "${projects[@]}"; do
         if ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "test -d ~/projects/$project_name" 2>/dev/null; then
             die "Project '$project_name' not found"
         fi
     done
 
     local failed=0
-    for project_name in "$@"; do
-        rm_project "$ip" "$project_name" || failed=1
+    for project_name in "${projects[@]}"; do
+        rm_project "$ip" "$project_name" "$force" || failed=1
     done
     return "$failed"
 }
@@ -1282,6 +1292,7 @@ cmd_rm() {
 rm_project() {
     local ip="$1"
     local project_name="$2"
+    local force="$3"
 
     local branch_name
     branch_name=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
@@ -1298,8 +1309,11 @@ rm_project() {
 
     log_info "Removing worktree '$project_name'..."
     if ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-        "cd '$repo_path' && git worktree remove ~/projects/$project_name"; then
-        log_error "Failed to remove worktree '$project_name'"
+        "cd '$repo_path' && git worktree remove $force ~/projects/$project_name"; then
+        log_error "Failed to remove worktree '$project_name'. Current state:"
+        ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+            "cd ~/projects/$project_name && git status --short" >&2 || true
+        log_error "Use 'tonka rm -f $project_name' to remove it anyway."
         return 1
     fi
 
