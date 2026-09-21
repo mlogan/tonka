@@ -89,9 +89,26 @@ resolve_default_repo() {
             die "TONKA_DEFAULT_REPO='$TONKA_DEFAULT_REPO' not found in VM. Available: $(echo "$repos" | tr '\n' ' ')"
         fi
         echo "$TONKA_DEFAULT_REPO"
-    else
-        echo "$repos" | head -1
+        return
     fi
+    if [[ $(echo "$repos" | wc -l) -eq 1 ]]; then
+        echo "$repos"
+        return
+    fi
+    # Called via $(...), so the menu and prompt must go to stderr (select does this already).
+    if [[ ! -t 0 ]]; then
+        die "Multiple repos in VM ($(echo "$repos" | paste -sd " " -)); pass one explicitly or set TONKA_DEFAULT_REPO in $CONFIG_FILE"
+    fi
+    log_warn "Multiple repos and no TONKA_DEFAULT_REPO set in $CONFIG_FILE." >&2
+    local choice
+    PS3="Repo: "
+    select choice in $repos; do
+        if [[ -n "$choice" ]]; then
+            echo "$choice"
+            return
+        fi
+    done
+    die "No repo selected"
 }
 
 get_default_branch_ssh() {

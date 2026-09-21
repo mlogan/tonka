@@ -94,7 +94,7 @@ did not make it to origin, and removes the worktree and local branch. Pass
 tonka prints how to inspect it, resume the Claude session, or discard it.
 
 Options:
-- `--repo <repo>` - repo to build in (default: `TONKA_DEFAULT_REPO` or first repo)
+- `--repo <repo>` - repo to build in (default: `TONKA_DEFAULT_REPO`, or the only repo)
 - `--name <project>` - worktree/branch name (default: `build-<slug of prompt>`)
 - `--keep` - keep the worktree after the PR is created
 
@@ -114,7 +114,7 @@ Variables (can be set in config file or environment):
 - `TONKA_MEMORY` - VM memory in MB (default: 5/8 of host memory)
 - `TONKA_DISK_SIZE` - VM disk size in GB (e.g., `512`)
 - `TONKA_DOTFILES_REPO` - Git URL of your dotfiles repo (should have `setup.sh` at root)
-- `TONKA_DEFAULT_REPO` - Name of the repo to use when `tonka new` / `tonka pr` is invoked without a repo argument (default: first repo alphabetically)
+- `TONKA_DEFAULT_REPO` - Name of the repo to use when `tonka new` / `tonka pr` / `tonka build` is invoked without a repo argument. If unset and the VM has several repos, tonka asks which one to use (or errors when not run interactively)
 - `TONKA_TOOLS` - Space-separated list of tools to install: `rust`, `go`, `nodejs`, `python`
 - `GITHUB_TOKEN` - Passed to VM for GitHub CLI authentication (auto-detected from `gh auth token` if not set)
 
