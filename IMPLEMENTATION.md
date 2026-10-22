@@ -20,9 +20,17 @@ Branch: `mlogan-kanban`
   the user confirms, then the board creates the worktree and starts Claude with the task.
 
 ## Done
+- guest/kanban: start.sh, board.sh, agent.sh, tmux.conf, kanban.py, plugin (tonka-kanban skill + state hooks)
+- cmd_kanban in tonka (installs tmux, copies files, ssh -t into start.sh); tmux added to install.sh
+- start.sh marks ~/projects as trusted in ~/.claude.json; otherwise new agents stop at the trust prompt
+- Docs: README.md, TONKA_FOR_DUMMIES.md
+- Tested in the VM: board scan of 42 projects with PR states; new project via claude -p (repo + name);
+  skill writes status.md; hooks drive working -> waiting -> exited; Enter on an exited card resumes
+  with --continue; Ctrl-\ returns to the board (real tmux client); done card -> delete with force
+  prompt; `tonka kanban` from the host attaches and `q` detaches.
 
 ## Remaining
-- guest/kanban files: start.sh, board.sh, agent.sh, tmux.conf, kanban.py, plugin (skill + hooks)
-- cmd_kanban in tonka, usage text, tmux in install.sh
-- Test in the VM
-- Docs: README.md, TONKA_FOR_DUMMIES.md
+- Not tested: a card reaching "done" through merged PRs (only `status: done` was tested), and the
+  In review column with a real PR.
+- Possible follow-ups: kill orphaned agent windows after `tonka rm`; PR polling uses one gh call per
+  project every 3 minutes, which could become one call per repo.
