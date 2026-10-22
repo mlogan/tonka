@@ -24,5 +24,10 @@ if ! "${t[@]}" has-session -t kanban 2>/dev/null; then
 elif ! "${t[@]}" list-windows -t kanban -F '#{window_name}' | grep -qx board; then
     "${t[@]}" new-window -d -t kanban: -n board "$dir/board.sh"
 fi
+# resize-window pins a window to a fixed size (window-size manual); undo that so
+# every window follows the attaching terminal.
+for w in $("${t[@]}" list-windows -t kanban -F '#{window_id}'); do
+    "${t[@]}" set-option -w -u -t "$w" window-size
+done
 "${t[@]}" select-window -t 'kanban:=board'
 exec "${t[@]}" -u attach -t kanban
