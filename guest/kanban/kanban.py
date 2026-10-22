@@ -17,18 +17,23 @@ import sys
 import threading
 import time
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 
 HOME = os.path.expanduser("~")
 PROJECTS = os.path.join(HOME, "projects")
 REPOS = os.path.join(HOME, "repos")
 KANBAN_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS = os.path.join(KANBAN_DIR, "prompts")
+PR_CACHE = os.path.join(KANBAN_DIR, "pr-cache.json")
 STATUS_FILE = os.path.join(".tonka", "status.md")
 STATE_FILE = os.path.join(".tonka", "agent-state")
 BOARD_WINDOW = "board"
 MODEL = os.environ.get("TONKA_KANBAN_MODEL", "sonnet")
 PR_POLL_SECONDS = 180  # one gh call per project per poll; keep well under the API rate limit
 SCAN_SECONDS = 1.0
+PROCESS_SCAN_SECONDS = 5.0
+# A mid-turn transcript that has not changed for this long is probably blocked on the user.
+STALE_TURN_SECONDS = 30 * 60
 
 NEEDS_INPUT, WORKING, REVIEW, IDLE = range(4)
 COLUMNS = ["Needs input", "Working", "In review", "Idle"]
@@ -144,14 +149,73 @@ def default_branch(repo_dir):
     return None
 
 
-def has_claude_session(path):
+def transcript_dir(path):
     # Claude Code stores transcripts under a directory named after the path with
     # every non-alphanumeric character replaced by '-'.
-    d = os.path.join(HOME, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", path))
+    return os.path.join(HOME, ".claude", "projects", re.sub(r"[^A-Za-z0-9]", "-", path))
+
+
+def has_claude_session(path):
     try:
-        return any(n.endswith(".jsonl") for n in os.listdir(d))
+        return any(n.endswith(".jsonl") for n in os.listdir(transcript_dir(path)))
     except OSError:
         return False
+
+
+def newest_transcript(path):
+    d = transcript_dir(path)
+    try:
+        files = [os.path.join(d, n) for n in os.listdir(d) if n.endswith(".jsonl")]
+        return max(files, key=os.path.getmtime) if files else None
+    except OSError:
+        return None
+
+
+def transcript_state(transcript):
+    """Infers "working" or "waiting" from the end of a Claude transcript."""
+    try:
+        with open(transcript, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 256 * 1024))
+            tail = f.read().decode("utf-8", errors="replace").splitlines()
+        age = time.time() - os.path.getmtime(transcript)
+    except OSError:
+        return "waiting"
+    for line in reversed(tail):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        kind = entry.get("type")
+        # Claude Code records the duration of every turn when the turn ends.
+        if kind == "system" and entry.get("subtype") == "turn_duration":
+            return "waiting"
+        if kind not in ("user", "assistant") or entry.get("isMeta"):
+            continue
+        message = entry.get("message") or {}
+        if kind == "assistant" and message.get("stop_reason") == "end_turn":
+            return "waiting"
+        content = message.get("content")
+        text = content if isinstance(content, str) else " ".join(
+            c.get("text", "") for c in content or [] if isinstance(c, dict))
+        if kind == "user" and text.startswith("[Request interrupted"):
+            return "waiting"
+        return "working" if age < STALE_TURN_SECONDS else "waiting"
+    return "waiting"
+
+
+def claude_cwds():
+    """Returns the working directories of every Claude process in the VM."""
+    r = run(["ps", "-A", "-o", "pid=,comm="])
+    pids = []
+    for line in r.stdout.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2 and os.path.basename(parts[1].strip()) == "claude":
+            pids.append(parts[0])
+    if not pids:
+        return set()
+    r = run(["lsof", "-a", "-d", "cwd", "-p", ",".join(pids), "-Fn"])
+    return {line[1:] for line in r.stdout.splitlines() if line.startswith("n")}
 
 
 def window_name(project):
@@ -172,6 +236,8 @@ class Card:
         self.prs = {}  # url -> state, from gh; replaced wholesale by the poller thread
         self.agent_state = ""
         self.window = None
+        self.external = False  # Claude runs for this project outside the board
+        self.external_state = ""
         self.status_mtime = None
 
     def refresh(self):
@@ -207,17 +273,27 @@ class Card:
             return True
         states = self.all_prs().values()
         return (bool(states) and all(s == "MERGED" for s in states)
-                and bool(self.checklist) and all(ok for ok, _ in self.checklist))
+                and all(ok for ok, _ in self.checklist))
+
+    def has_open_pr(self):
+        return "OPEN" in self.all_prs().values()
+
+    def board_agent(self):
+        return self.window is not None and self.agent_state != "exited"
 
     def column(self):
         if self.done():
             return NEEDS_INPUT
-        if self.window is None or self.agent_state == "exited":
-            return IDLE
-        # An empty state means Claude is still starting up.
-        if self.agent_state in ("working", ""):
+        if self.board_agent():
+            # An empty state means Claude is still starting up.
+            state = self.agent_state or "working"
+        elif self.external:
+            state = self.external_state
+        else:
+            return REVIEW if self.has_open_pr() or self.status == "review" else IDLE
+        if state == "working":
             return WORKING
-        if self.status == "review":
+        if self.status == "review" or (self.has_open_pr() and self.status != "needs-input"):
             return REVIEW
         return NEEDS_INPUT
 
@@ -381,6 +457,12 @@ class Board:
         self.notice_time = 0
         self.waiting_shown = None
         self.session = tmux("display-message", "-p", "#S").stdout.strip() if os.environ.get("TMUX") else ""
+        self.last_process_scan = 0
+        try:
+            with open(PR_CACHE) as f:
+                self.pr_cache = json.load(f)
+        except (OSError, ValueError):
+            self.pr_cache = {}
         self.pr_wake = threading.Event()
         threading.Thread(target=self.poll_prs, daemon=True).start()
         self.init_colors()
@@ -420,6 +502,7 @@ class Board:
             card = self.cards.get(name) or Card(name)
             if card.refresh():
                 if name not in self.cards:
+                    card.prs = self.pr_cache.get(name, {})
                     self.cards[name] = card
                     self.pr_wake.set()
                 seen.add(name)
@@ -437,19 +520,38 @@ class Board:
         for card in self.cards.values():
             card.window = windows.get(window_name(card.name))
 
+        if time.time() - self.last_process_scan >= PROCESS_SCAN_SECONDS:
+            self.last_process_scan = time.time()
+            cwds = claude_cwds()
+            for card in self.cards.values():
+                prefix = card.path + os.sep
+                card.external = not card.board_agent() and any(
+                    c == card.path or c.startswith(prefix) for c in cwds)
+                if card.external:
+                    t = newest_transcript(card.path)
+                    card.external_state = transcript_state(t) if t else "working"
+
         waiting = sum(1 for c in self.cards.values() if c.column() == NEEDS_INPUT)
         if self.session and waiting != self.waiting_shown:
             self.waiting_shown = waiting
             tmux("set-option", "-g", "@tonka-waiting", str(waiting) if waiting else "")
 
     def poll_prs(self):
-        while True:
-            for card in list(self.cards.values()):
-                prs = fetch_prs(card)
-                if prs is not None:
-                    card.prs = prs
-            self.pr_wake.wait(PR_POLL_SECONDS)
-            self.pr_wake.clear()
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            while True:
+                cards = list(self.cards.values())
+                for card, prs in zip(cards, pool.map(fetch_prs, cards)):
+                    if prs is not None:
+                        card.prs = prs
+                        self.pr_cache[card.name] = prs
+                try:
+                    with open(PR_CACHE + ".tmp", "w") as f:
+                        json.dump(self.pr_cache, f)
+                    os.replace(PR_CACHE + ".tmp", PR_CACHE)
+                except OSError:
+                    pass
+                self.pr_wake.wait(PR_POLL_SECONDS)
+                self.pr_wake.clear()
 
     def layout(self):
         cols = [[] for _ in COLUMNS]
@@ -507,6 +609,8 @@ class Board:
             lines.append(("○ Claude exited", a["dim"]))
         elif card.column() == NEEDS_INPUT:
             lines.append(("● Waiting for you", a["yellow"]))
+        if card.external and not card.done():
+            lines.append(("◆ Claude is running in another terminal", a["dim"]))
         for ok, text in card.checklist:
             for line in wrap(text, width, "☑ " if ok else "☐ ", "  "):
                 lines.append((line, a["dim"] if ok else 0))
@@ -765,6 +869,10 @@ class Board:
                 self.delete(card, confirmed=True)
             elif choice == "o":
                 self.open_card(card)
+            return
+        if card.external and not card.board_agent():
+            # A second Claude would resume the same conversation as the running one.
+            self.say(f"Claude for {card.name} is running in another terminal; switch to it there.")
             return
         self.open_card(card)
 

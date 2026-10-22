@@ -118,9 +118,14 @@ work, and links to its PRs.
 Columns:
 - **Needs input**: Claude has finished its turn or asked a question. Completed
   projects (every PR merged) also appear here; Enter offers to delete them.
-- **Working**: Claude is running.
-- **In review**: a PR is open and Claude is waiting for reviewers or CI.
-- **Idle**: no Claude session is running for the project.
+- **Working**: Claude is in the middle of a turn.
+- **In review**: the project has an open PR, and Claude is not working or waiting for you.
+- **Idle**: no Claude is running and the project has no open PR.
+
+The board also places Claude sessions that you started outside it (for
+example with `tonka cl`). It finds them by their working directory and reads
+the end of their transcript to tell whether Claude is working or waiting.
+Enter does not open a second session for such a project; switch to its terminal.
 
 Keys:
 - Arrow keys (or `hjkl`) move between cards.
