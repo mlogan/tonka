@@ -190,6 +190,24 @@ open a PR. When the PR exists, Tonka prints its URL and removes the worktree
 prints how to inspect it, resume the session, or discard it. Pass `--keep` to
 keep the worktree even after the PR is created.
 
+### Managing many projects with `tonka kanban`
+
+```bash
+tonka kanban
+```
+
+This opens a Kanban board with a card for every project in the VM. The board
+lives in a tmux session inside the VM, so your agents keep running when you
+disconnect, and `tonka kanban` picks up where you left off.
+
+- The left column, **Needs input**, holds the agents that are waiting for you.
+- Use the arrow keys to pick a card and Enter to jump into that project's Claude
+  session. Press `Ctrl-\` to get back to the board.
+- Press `n` to start a new project: describe the task, check the repo and name
+  Claude suggests, and press Enter. Claude starts working right away.
+- When all of a project's PRs are merged, its card moves to **Needs input** and
+  Enter offers to delete the project.
+
 ---
 
 ## 8. Day-to-Day Commands
@@ -201,6 +219,7 @@ keep the worktree even after the PR is created.
 | `tonka sh [project]` | SSH into the VM (optionally into a project directory) |
 | `tonka new <project> [repo]` | Create a new worktree + launch Claude |
 | `tonka build <prompt>` | Unattended: new worktree, headless Claude, PR, then remove the worktree |
+| `tonka kanban` | Open the Kanban board of all projects (resumes it if already running) |
 | `tonka new-repo <path>` | Clone a local repo's remote into the VM |
 | `tonka list` | List all repos and projects in the VM |
 | `tonka cleanup` | Prune merged worktrees |
