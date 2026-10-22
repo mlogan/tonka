@@ -4,6 +4,8 @@ set -euo pipefail
 
 dir="$(cd "$(dirname "$0")" && pwd)"
 export LANG="${LANG:-en_US.UTF-8}"
+# tmux exits with "missing or unsuitable terminal" when TERM has no terminfo entry.
+infocmp "${TERM:-dumb}" >/dev/null 2>&1 || export TERM=xterm-256color
 # The tmux server's environment is inherited by the board and every agent window.
 if [ -f ~/.claude.env ]; then set -a; . ~/.claude.env; set +a; fi
 

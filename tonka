@@ -1363,6 +1363,15 @@ cmd_kanban() {
             || die "Failed to install tmux in the VM"
     fi
 
+    # tmux refuses to start if the VM has no terminfo entry for the host's TERM
+    # (e.g. xterm-ghostty), so copy the host's entry over.
+    if [[ -n "${TERM:-}" ]] && infocmp -x "$TERM" &>/dev/null \
+        && ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "infocmp '$TERM'" &>/dev/null; then
+        log_info "Installing terminfo for $TERM in the VM..."
+        infocmp -x "$TERM" | ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "tic -x -" \
+            || log_warn "Could not install terminfo for $TERM; the board will use xterm-256color"
+    fi
+
     # Copy over (not replace) ~/.tonka/kanban: it also holds prompts for agents being started.
     tar -C "$SCRIPT_DIR/guest/kanban" -cf - . \
         | ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
