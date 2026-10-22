@@ -1,0 +1,5 @@
+{
+  "name": "tonka-kanban",
+  "version": "0.1.0",
+  "description": "Reports agent state and progress to the tonka kanban board"
+}
