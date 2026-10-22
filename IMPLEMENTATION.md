@@ -29,8 +29,15 @@ Branch: `mlogan-kanban`
   with --continue; Ctrl-\ returns to the board (real tmux client); done card -> delete with force
   prompt; `tonka kanban` from the host attaches and `q` detaches.
 
+- Startup stage inference: open PR -> In review, all PRs merged -> done; Claude processes outside the
+  board are found by cwd (ps + lsof) and their state read from the transcript tail
+  (`system/turn_duration` or `end_turn` = waiting). PR polling is parallel and cached in pr-cache.json.
+  Checked against the VM's 39 projects: 14 Needs input / 1 Working / 12 In review / 11 Idle.
+- Windows follow the attaching terminal's size; host terminfo (e.g. xterm-ghostty) is installed in the VM.
+
 ## Remaining
 - Not tested: a card reaching "done" through merged PRs (only `status: done` was tested), and the
   In review column with a real PR.
 - Possible follow-ups: kill orphaned agent windows after `tonka rm`; PR polling uses one gh call per
   project every 3 minutes, which could become one call per repo.
+- A branch name reused from an old merged PR makes a new project look done.
