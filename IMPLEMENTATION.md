@@ -18,6 +18,9 @@ Branch: `mlogan-kanban`
   and the checklist complete) go to Needs input, and Enter offers to delete the project.
 - `n` creates a project: the user types a task, `claude -p` picks a repo and a worktree name,
   the user confirms, then the board creates the worktree and starts Claude with the task.
+- `a` queues quick notes, one per line, in `~/.tonka/kanban/queue.json`. They show in a Queue column
+  (drawn only when non-empty). Enter on a note runs the `n` flow with the note as the starting text;
+  the note is removed when the project is confirmed.
 
 ## Done
 - guest/kanban: start.sh, board.sh, agent.sh, tmux.conf, kanban.py, plugin (tonka-kanban skill + state hooks)
@@ -34,6 +37,11 @@ Branch: `mlogan-kanban`
   (`system/turn_duration` or `end_turn` = waiting). PR polling is parallel and cached in pr-cache.json.
   Checked against the VM's 39 projects: 14 Needs input / 1 Working / 12 In review / 11 Idle.
 - Windows follow the attaching terminal's size; host terminfo (e.g. xterm-ghostty) is installed in the VM.
+- Project queue (`a`). Tested on a separate tmux server in the VM: multi-line entry, bullet stripping,
+  wrapping, removal with `d`, Esc at the confirm dialog keeps the note, and creating a project from a
+  note removes it.
+- getkey decodes Home/End/Delete sequences that tmux sends but the inner terminfo (xterm-256color from
+  ~/.tmux.conf) does not list; before, they arrived as Esc and cancelled dialogs.
 
 ## Remaining
 - Not tested: a card reaching "done" through merged PRs (only `status: done` was tested), and the
