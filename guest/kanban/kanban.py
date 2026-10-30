@@ -210,18 +210,24 @@ def transcript_state(transcript):
     return "waiting"
 
 
-def claude_cwds():
-    """Returns the working directories of every Claude process in the VM."""
-    r = run(["ps", "-A", "-o", "pid=,comm="])
-    pids = []
+def claude_procs():
+    """Returns (cwd, tty device) for every Claude process in the VM."""
+    r = run(["ps", "-A", "-o", "pid=,tty=,comm="])
+    ttys = {}
     for line in r.stdout.splitlines():
-        parts = line.split(None, 1)
-        if len(parts) == 2 and os.path.basename(parts[1].strip()) == "claude":
-            pids.append(parts[0])
-    if not pids:
-        return set()
-    r = run(["lsof", "-a", "-d", "cwd", "-p", ",".join(pids), "-Fn"])
-    return {line[1:] for line in r.stdout.splitlines() if line.startswith("n")}
+        parts = line.split(None, 2)
+        if len(parts) == 3 and os.path.basename(parts[2].strip()) == "claude":
+            ttys[parts[0]] = "/dev/" + parts[1]
+    if not ttys:
+        return []
+    r = run(["lsof", "-a", "-d", "cwd", "-p", ",".join(ttys), "-Fpn"])
+    procs, pid = [], None
+    for line in r.stdout.splitlines():
+        if line.startswith("p"):
+            pid = line[1:]
+        elif line.startswith("n") and pid in ttys:
+            procs.append((line[1:], ttys[pid]))
+    return procs
 
 
 def window_name(project):
@@ -242,6 +248,10 @@ class Card:
         self.prs = {}  # url -> state, from gh; replaced wholesale by the poller thread
         self.agent_state = ""
         self.window = None
+        self.ttys = set()  # tty devices of the panes in the board's window for this project
+        # A Claude process runs in the board's window. This overrides agent-state "exited",
+        # which goes stale when Claude is restarted by hand without the board's hooks.
+        self.in_window = False
         self.external = False  # Claude runs for this project outside the board
         self.external_state = ""
         self.status_mtime = None
@@ -285,12 +295,14 @@ class Card:
         return "OPEN" in self.all_prs().values()
 
     def board_agent(self):
-        return self.window is not None and self.agent_state != "exited"
+        return self.window is not None and (self.agent_state != "exited" or self.in_window)
 
     def column(self):
         if self.done():
             return NEEDS_INPUT
-        if self.board_agent():
+        if self.board_agent() and self.agent_state == "exited":
+            state = self.external_state
+        elif self.board_agent():
             # An empty state means Claude is still starting up.
             state = self.agent_state or "working"
         elif self.external:
@@ -542,23 +554,27 @@ class Board:
                 del self.cards[name]
         self.pending = [p for p in self.pending if p.name not in self.cards]
 
-        windows = {}
+        windows, ttys = {}, {}
         if self.session:
-            out = tmux("list-windows", "-t", self.session, "-F", "#{window_id}\t#{window_name}").stdout
+            out = tmux("list-panes", "-s", "-t", self.session, "-F",
+                       "#{window_id}\t#{pane_tty}\t#{window_name}").stdout
             for line in out.splitlines():
-                wid, _, wname = line.partition("\t")
+                wid, tty, wname = line.split("\t", 2)
                 windows[wname] = wid
+                ttys.setdefault(wname, set()).add(tty)
         for card in self.cards.values():
             card.window = windows.get(window_name(card.name))
+            card.ttys = ttys.get(window_name(card.name), set())
 
         if time.time() - self.last_process_scan >= PROCESS_SCAN_SECONDS:
             self.last_process_scan = time.time()
-            cwds = claude_cwds()
+            procs = claude_procs()
             for card in self.cards.values():
                 prefix = card.path + os.sep
-                card.external = not card.board_agent() and any(
-                    c == card.path or c.startswith(prefix) for c in cwds)
-                if card.external:
+                mine = [tty for cwd, tty in procs if cwd == card.path or cwd.startswith(prefix)]
+                card.in_window = any(tty in card.ttys for tty in mine)
+                card.external = bool(mine) and not card.board_agent()
+                if card.external or (card.in_window and card.agent_state == "exited"):
                     t = newest_transcript(card.path)
                     card.external_state = transcript_state(t) if t else "working"
 
@@ -639,7 +655,7 @@ class Board:
         lines.append((sub, a["dim"]))
         if card.done():
             lines.append(("✔ Complete. Enter deletes it.", a["green"]))
-        elif card.window is not None and card.agent_state == "exited":
+        elif card.window is not None and not card.board_agent():
             lines.append(("○ Claude exited", a["dim"]))
         elif card.column() == NEEDS_INPUT:
             lines.append(("● Waiting for you", a["yellow"]))
@@ -979,7 +995,7 @@ class Board:
     # --- actions -----------------------------------------------------------
 
     def open_card(self, card, prompt_file=None, select=True):
-        if card.window and card.agent_state == "exited" and not prompt_file:
+        if card.window and not card.board_agent() and not prompt_file:
             tmux("kill-window", "-t", card.window)
             card.window = None
         if card.window and not prompt_file:
