@@ -39,6 +39,10 @@ NEEDS_INPUT, WORKING, REVIEW, IDLE = range(4)
 COLUMNS = ["Needs input", "Working", "In review", "Idle"]
 MESSAGE_LINES = 6
 
+ESCAPE_KEYS = {"[1~": curses.KEY_HOME, "[7~": curses.KEY_HOME, "[H": curses.KEY_HOME, "OH": curses.KEY_HOME,
+               "[4~": curses.KEY_END, "[8~": curses.KEY_END, "[F": curses.KEY_END, "OF": curses.KEY_END,
+               "[3~": curses.KEY_DC}
+
 CHECK_RE = re.compile(r"^\s*[-*]\s*\[([ xX])\]\s*(.*)$")
 HEADER_RE = re.compile(r"^([A-Za-z][\w-]*):\s*(.*)$")
 
@@ -713,13 +717,16 @@ class Board:
 
     # --- dialogs -----------------------------------------------------------
 
-    def dialog_box(self, title, body, width=None):
-        """Draws a centred box with a title and a list of (text, attr) lines; returns its origin."""
+    def dialog_box(self, title, body, width=None, rewrap=True):
+        """Draws a centred box with a title and a list of (text, attr) lines; returns its origin.
+
+        Editors pass rewrap=False because word-wrapping collapses spaces and moves the cursor.
+        """
         h, w = self.scr.getmaxyx()
         bw = min(w - 4, width or 76)
         lines = []
         for text, attr in body:
-            lines += [(l, attr) for l in (wrap(text, bw - 4) if text else [""])]
+            lines += [(l, attr) for l in (wrap(text, bw - 4) if text and rewrap else [text])]
         lines = lines[:max(1, h - 6)]
         bh = len(lines) + 4
         y0, x0 = max(0, (h - bh) // 2), max(0, (w - bw) // 2)
@@ -760,7 +767,7 @@ class Board:
                 start = max(0, crow - vis + 1)
                 body = [(r, 0) for r in rows[start:start + vis]]
                 body += [("", 0)] * (3 - len(body)) + [("", 0), (hint, self.attr["dim"])]
-                y0, x0, _ = self.dialog_box(title, body, 80)
+                y0, x0, _ = self.dialog_box(title, body, 80, rewrap=False)
                 try:
                     self.scr.move(y0 + 2 + crow - start, x0 + 2 + ccol)
                 except curses.error:
@@ -819,9 +826,32 @@ class Board:
 
     def getkey(self):
         try:
-            return self.scr.get_wch()
+            ch = self.scr.get_wch()
         except curses.error:
             return None
+        if ch != "\x1b":
+            return ch
+        # tmux sends Home/End/Delete in forms that the inner TERM's terminfo may not list,
+        # so curses returns them as Esc followed by the rest of the sequence.
+        seq = ""
+        self.scr.timeout(10)
+        try:
+            while len(seq) < 4:
+                try:
+                    c = self.scr.get_wch()
+                except curses.error:
+                    break
+                if not isinstance(c, str):
+                    curses.ungetch(c)
+                    break
+                seq += c
+                if seq in ESCAPE_KEYS:
+                    return ESCAPE_KEYS[seq]
+        finally:
+            self.scr.timeout(500)
+        for c in reversed(seq):
+            curses.unget_wch(c)
+        return ch
 
     # --- actions -----------------------------------------------------------
 
