@@ -135,7 +135,12 @@ Keys:
 - `n` creates a project. Describe the task; Claude picks the repo and the
   worktree/branch name, and you confirm or edit them. Claude then starts on the
   task in the new worktree.
-- `d` deletes the selected project (worktree and local branch).
+- `a` queues projects for later. Type one short note per line and press Enter
+  on an empty line to save them. The notes appear in a **Queue** column on the
+  right. Enter on a note opens the `n` flow with the note as the starting text,
+  and the note leaves the queue once you confirm the project.
+- `d` deletes the selected project (worktree and local branch), or removes the
+  selected note from the queue.
 - `r` refreshes PR states, `R` reloads the board, `q` detaches.
 
 Claude learns about the board from a plugin that tonka loads into every session

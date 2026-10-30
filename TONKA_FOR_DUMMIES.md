@@ -205,6 +205,9 @@ disconnect, and `tonka kanban` picks up where you left off.
   session. Press `Ctrl-\` to get back to the board.
 - Press `n` to start a new project: describe the task, check the repo and name
   Claude suggests, and press Enter. Claude starts working right away.
+- Press `a` to jot down several project ideas at once, one per line. They wait
+  in the **Queue** column. Select one and press Enter when you are ready to
+  write the full description and start it.
 - When all of a project's PRs are merged, its card moves to **Needs input** and
   Enter offers to delete the project.
 

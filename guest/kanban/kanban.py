@@ -25,6 +25,7 @@ REPOS = os.path.join(HOME, "repos")
 KANBAN_DIR = os.path.dirname(os.path.abspath(__file__))
 PROMPTS = os.path.join(KANBAN_DIR, "prompts")
 PR_CACHE = os.path.join(KANBAN_DIR, "pr-cache.json")
+QUEUE_FILE = os.path.join(KANBAN_DIR, "queue.json")
 STATUS_FILE = os.path.join(".tonka", "status.md")
 STATE_FILE = os.path.join(".tonka", "agent-state")
 BOARD_WINDOW = "board"
@@ -35,8 +36,9 @@ PROCESS_SCAN_SECONDS = 5.0
 # A mid-turn transcript that has not changed for this long is probably blocked on the user.
 STALE_TURN_SECONDS = 30 * 60
 
-NEEDS_INPUT, WORKING, REVIEW, IDLE = range(4)
-COLUMNS = ["Needs input", "Working", "In review", "Idle"]
+NEEDS_INPUT, WORKING, REVIEW, IDLE, QUEUE = range(5)
+# The Queue column holds notes for projects not yet created; it is drawn only when non-empty.
+COLUMNS = ["Needs input", "Working", "In review", "Idle", "Queue"]
 MESSAGE_LINES = 6
 
 ESCAPE_KEYS = {"[1~": curses.KEY_HOME, "[7~": curses.KEY_HOME, "[H": curses.KEY_HOME, "OH": curses.KEY_HOME,
@@ -447,11 +449,36 @@ class Pending:
         self.repo = repo
 
 
+class QueueItem:
+    """A quick note for a project that has not been created yet."""
+
+    def __init__(self, id, note):
+        self.id = id
+        self.note = note
+        # Selection is tracked by name; the prefix keeps it apart from project names.
+        self.name = f"queue:{id}"
+
+
+def load_queue():
+    try:
+        with open(QUEUE_FILE) as f:
+            return [QueueItem(e["id"], e["note"]) for e in json.load(f)]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+
+
+def save_queue(items):
+    with open(QUEUE_FILE + ".tmp", "w") as f:
+        json.dump([{"id": q.id, "note": q.note} for q in items], f, indent=1)
+    os.replace(QUEUE_FILE + ".tmp", QUEUE_FILE)
+
+
 class Board:
     def __init__(self, scr):
         self.scr = scr
         self.cards = {}
         self.pending = []
+        self.queue = load_queue()
         self.selected = None
         self.want_selected = None  # a card to select once it appears
         self.sel_col, self.sel_idx = NEEDS_INPUT, 0
@@ -563,10 +590,11 @@ class Board:
             cols[card.column()].append(card)
         for col in cols:
             col.sort(key=lambda c: (c.done(), c.name))
+        cols[QUEUE] = list(self.queue)
         return cols
 
     def fix_selection(self, cols):
-        if self.want_selected in self.cards:
+        if any(c.name == self.want_selected for col in cols for c in col):
             self.selected, self.want_selected = self.want_selected, None
         for ci, col in enumerate(cols):
             for i, card in enumerate(col):
@@ -584,7 +612,9 @@ class Board:
         self.selected = None
 
     def current(self):
-        return self.cards.get(self.selected) if self.selected else None
+        if not self.selected:
+            return None
+        return self.cards.get(self.selected) or next((q for q in self.queue if q.name == self.selected), None)
 
     # --- drawing -----------------------------------------------------------
 
@@ -651,13 +681,14 @@ class Board:
         self.fix_selection(cols)
 
         self.put(0, 0, " tonka kanban", a["bold"])
-        help_text = "←↑↓→ move  ⏎ open  n new  d delete  r refresh PRs  R reload  q detach  │  Ctrl-\\ returns here"
+        help_text = ("←↑↓→ move  ⏎ open  n new  a queue notes  d delete  r refresh PRs  R reload  q detach"
+                     "  │  Ctrl-\\ returns here")
         self.put(0, max(14, w - disp_width(help_text) - 1), help_text, a["dim"])
 
-        ncol = len(COLUMNS)
+        ncol = len(COLUMNS) if self.queue else len(COLUMNS) - 1
         colw = max(12, (w - (ncol - 1)) // ncol)
         top, bottom = 3, h - 1
-        for ci, title in enumerate(COLUMNS):
+        for ci, title in enumerate(COLUMNS[:ncol]):
             x = ci * (colw + 1)
             n = len(cols[ci]) + (len(self.pending) if ci == WORKING else 0)
             attr = a["yellow"] if ci == NEEDS_INPUT and n else a["bold"]
@@ -670,7 +701,10 @@ class Board:
                 for p in self.pending:
                     entries.append((None, [(p.name, a["bold"]), (p.repo, a["dim"]),
                                            ("Creating worktree…", a["yellow"])]))
-            entries += [(card, self.card_lines(card, inner)) for card in cols[ci]]
+            if ci == QUEUE:
+                entries += [(q, [(l, 0) for l in wrap(q.note, inner)]) for q in cols[ci]]
+            else:
+                entries += [(card, self.card_lines(card, inner)) for card in cols[ci]]
 
             # Scroll the selected column so the selected card is visible.
             ys, y = [], 0
@@ -705,8 +739,8 @@ class Board:
             if y - off > avail:
                 self.put(bottom - 1, x + colw - 2, "↓", a["dim"])
 
-        if not self.cards and not self.pending:
-            self.put(h // 2, 2, "No projects in ~/projects. Press n to create one.", a["dim"])
+        if not self.cards and not self.pending and not self.queue:
+            self.put(h // 2, 2, "No projects in ~/projects. Press n to create one, or a to queue notes.", a["dim"])
         if self.notice and time.time() - self.notice_time < 15:
             self.put(h - 1, 0, " " + self.notice, a["yellow"])
 
@@ -824,6 +858,95 @@ class Board:
         finally:
             curses.curs_set(0)
 
+    def edit_lines(self, title):
+        """Edits a list of one-line notes. Enter on an empty line finishes; Esc offers to discard."""
+        lines, row, pos = [[]], 0, 0
+        hint = "Enter next note · Enter on an empty line saves · ↑↓ move · Esc cancel"
+        curses.curs_set(1)
+        try:
+            while True:
+                self.tick()
+                h, w = self.scr.getmaxyx()
+                bw = min(w - 4, 80)
+                tw = max(4, bw - 6)  # room for the "• " prefix
+                rows, cur = [], (0, 0)
+                for i, line in enumerate(lines):
+                    chunks = ["".join(line[j:j + tw]) for j in range(0, len(line) + 1, tw)]
+                    if i == row:
+                        cur = (len(rows) + pos // tw, 2 + pos % tw)
+                    rows += [("• " if j == 0 else "  ") + c for j, c in enumerate(chunks)]
+                vis = max(3, h - 10)
+                start = max(0, cur[0] - vis + 1)
+                body = [(r, 0) for r in rows[start:start + vis]]
+                body += [("", 0)] * (3 - len(body)) + [("", 0), (hint, self.attr["dim"])]
+                y0, x0, _ = self.dialog_box(title, body, 80, rewrap=False)
+                try:
+                    self.scr.move(y0 + 2 + cur[0] - start, x0 + 2 + cur[1])
+                except curses.error:
+                    pass
+                self.scr.refresh()
+                ch = self.getkey()
+                if ch is None:
+                    continue
+                line = lines[row]
+                if ch in ("\n", "\r", curses.KEY_ENTER):
+                    # A newline followed immediately by more input is part of a paste.
+                    self.scr.timeout(20)
+                    try:
+                        nxt = self.scr.get_wch()
+                    except curses.error:
+                        nxt = None
+                    finally:
+                        self.scr.timeout(500)
+                    if nxt is not None:
+                        curses.unget_wch(nxt)
+                    elif not "".join(line).strip():
+                        return [n for n in ("".join(l).strip() for l in lines) if n]
+                    lines[row:row + 1] = [line[:pos], line[pos:]]
+                    row, pos = row + 1, 0
+                elif ch == "\x1b":
+                    notes = [l for l in lines if "".join(l).strip()]
+                    if not notes or self.ask("Discard notes", [(f"Discard {len(notes)} note(s)?", 0), ("", 0),
+                                                               ("y discard · Enter, n or Esc keep editing",
+                                                                self.attr["dim"])],
+                                             keys="yn", enter="n") == "y":
+                        return []
+                elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+                    if pos > 0:
+                        pos -= 1
+                        del line[pos]
+                    elif row > 0:
+                        row -= 1
+                        pos = len(lines[row])
+                        lines[row] += lines.pop(row + 1)
+                elif ch == curses.KEY_DC:
+                    if pos < len(line):
+                        del line[pos]
+                    elif row < len(lines) - 1:
+                        line += lines.pop(row + 1)
+                elif ch == curses.KEY_UP:
+                    row = max(0, row - 1)
+                    pos = min(pos, len(lines[row]))
+                elif ch == curses.KEY_DOWN:
+                    row = min(len(lines) - 1, row + 1)
+                    pos = min(pos, len(lines[row]))
+                elif ch == curses.KEY_LEFT:
+                    pos = max(0, pos - 1)
+                elif ch == curses.KEY_RIGHT:
+                    pos = min(len(line), pos + 1)
+                elif ch in (curses.KEY_HOME, "\x01"):
+                    pos = 0
+                elif ch in (curses.KEY_END, "\x05"):
+                    pos = len(line)
+                elif ch == "\x15":
+                    del line[:pos]
+                    pos = 0
+                elif isinstance(ch, str) and ch.isprintable():
+                    line.insert(pos, ch)
+                    pos += 1
+        finally:
+            curses.curs_set(0)
+
     def getkey(self):
         try:
             ch = self.scr.get_wch()
@@ -888,6 +1011,9 @@ class Board:
         card = self.current()
         if card is None:
             return
+        if isinstance(card, QueueItem):
+            self.new_project(card)
+            return
         if card.done():
             choice = self.ask("Project complete",
                               [(f"{card.name}: all work is merged.", 0), ("", 0),
@@ -936,8 +1062,33 @@ class Board:
         self.cards.pop(card.name, None)
         self.say(f"Deleted {card.name}.")
 
-    def new_project(self):
-        desc = self.edit_text("New project: describe the task")
+    def queue_notes(self):
+        notes = self.edit_lines("Queue project notes: one per line")
+        if not notes:
+            return
+        next_id = max((q.id for q in self.queue), default=0) + 1
+        # Pasted markdown bullets keep their text only.
+        items = [QueueItem(next_id + i, re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", n))
+                 for i, n in enumerate(notes)]
+        self.queue += items
+        save_queue(self.queue)
+        self.want_selected = items[0].name
+        self.say(f"Queued {len(items)} note(s). Select one and press Enter to start the project.")
+
+    def unqueue(self, item, confirmed=False):
+        if not confirmed and self.ask("Remove note", [(item.note, 0), ("", 0),
+                                                       ("y remove · Enter, n or Esc keep", self.attr["dim"])],
+                                      keys="yn", enter="n") != "y":
+            return
+        self.queue = [q for q in self.queue if q.id != item.id]
+        save_queue(self.queue)
+
+    def new_project(self, item=None):
+        """Creates a project; `item` is the queued note it starts from, removed once the project is confirmed."""
+        title = "New project: describe the task"
+        if item:
+            title = "Queued project: replace the note with a full description"
+        desc = self.edit_text(title, item.note if item else "")
         if not desc:
             return
         repos = list_repos()
@@ -998,6 +1149,8 @@ class Board:
             elif choice == "create":
                 break
 
+        if item:
+            self.unqueue(item, confirmed=True)
         pending = Pending(name, repo)
         self.pending.append(pending)
         self.want_selected = name
@@ -1085,8 +1238,13 @@ This session is tracked on the tonka kanban board. Follow the tonka-kanban skill
                 self.activate()
             elif ch == "n":
                 self.new_project()
+            elif ch == "a":
+                self.queue_notes()
             elif ch == "d" and self.current():
-                self.delete(self.current())
+                if isinstance(self.current(), QueueItem):
+                    self.unqueue(self.current())
+                else:
+                    self.delete(self.current())
             elif ch == "r":
                 self.pr_wake.set()
                 self.say("Refreshing PRs…")

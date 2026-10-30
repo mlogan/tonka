@@ -1372,7 +1372,7 @@ cmd_kanban() {
             || log_warn "Could not install terminfo for $TERM; the board will use xterm-256color"
     fi
 
-    # Copy over (not replace) ~/.tonka/kanban: it also holds prompts for agents being started.
+    # Copy over (not replace) ~/.tonka/kanban: it also holds agent prompts, the PR cache, and the project queue.
     tar -C "$SCRIPT_DIR/guest/kanban" --exclude __pycache__ -cf - . \
         | ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
             "mkdir -p ~/.tonka/kanban && tar -C ~/.tonka/kanban -xf -"
