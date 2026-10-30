@@ -40,6 +40,9 @@ Branch: `mlogan-kanban`
 - Project queue (`a`). Tested on a separate tmux server in the VM: multi-line entry, bullet stripping,
   wrapping, removal with `d`, Esc at the confirm dialog keeps the note, and creating a project from a
   note removes it.
+- Claude processes are matched to board windows by pane tty. A Claude restarted by hand in a board
+  window (agent-state stale at "exited") counts as the board's agent; Enter switches to it, and its
+  state comes from the transcript.
 - getkey decodes Home/End/Delete sequences that tmux sends but the inner terminfo (xterm-256color from
   ~/.tmux.conf) does not list; before, they arrived as Esc and cancelled dialogs.
 
