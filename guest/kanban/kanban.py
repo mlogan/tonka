@@ -43,15 +43,31 @@ MESSAGE_LINES = 6
 
 ESCAPE_KEYS = {"[1~": curses.KEY_HOME, "[7~": curses.KEY_HOME, "[H": curses.KEY_HOME, "OH": curses.KEY_HOME,
                "[4~": curses.KEY_END, "[8~": curses.KEY_END, "[F": curses.KEY_END, "OF": curses.KEY_END,
-               "[3~": curses.KEY_DC, "\x7f": "M-BS", "\b": "M-BS"}
+               "[3~": curses.KEY_DC, "\x7f": "M-BS", "\b": "M-BS",
+               "b": "M-LEFT", "[1;3D": "M-LEFT", "f": "M-RIGHT", "[1;3C": "M-RIGHT"}
+# Option+arrow keys that curses decodes itself arrive as extended key codes with these names.
+KEYNAMES = {b"kLFT3": "M-LEFT", b"kRIT3": "M-RIGHT"}
+
+
+def word_left(buf, pos):
+    while pos > 0 and buf[pos - 1] == " ":
+        pos -= 1
+    while pos > 0 and buf[pos - 1] != " ":
+        pos -= 1
+    return pos
+
+
+def word_right(buf, pos):
+    while pos < len(buf) and buf[pos] == " ":
+        pos += 1
+    while pos < len(buf) and buf[pos] != " ":
+        pos += 1
+    return pos
+
 
 def delete_word_back(buf, pos):
     """Deletes the word before `pos` in `buf` and returns the new cursor position."""
-    start = pos
-    while start > 0 and buf[start - 1] == " ":
-        start -= 1
-    while start > 0 and buf[start - 1] != " ":
-        start -= 1
+    start = word_left(buf, pos)
     del buf[start:pos]
     return start
 
@@ -864,6 +880,10 @@ class Board:
                     pos = max(0, pos - 1)
                 elif ch == curses.KEY_RIGHT:
                     pos = min(len(buf), pos + 1)
+                elif ch == "M-LEFT":
+                    pos = word_left(buf, pos)
+                elif ch == "M-RIGHT":
+                    pos = word_right(buf, pos)
                 elif ch in (curses.KEY_HOME, "\x01"):
                     pos = 0
                 elif ch in (curses.KEY_END, "\x05"):
@@ -955,6 +975,10 @@ class Board:
                     pos = max(0, pos - 1)
                 elif ch == curses.KEY_RIGHT:
                     pos = min(len(line), pos + 1)
+                elif ch == "M-LEFT":
+                    pos = word_left(line, pos)
+                elif ch == "M-RIGHT":
+                    pos = word_right(line, pos)
                 elif ch in (curses.KEY_HOME, "\x01"):
                     pos = 0
                 elif ch in (curses.KEY_END, "\x05"):
@@ -975,14 +999,19 @@ class Board:
             ch = self.scr.get_wch()
         except curses.error:
             return None
+        if isinstance(ch, int):
+            try:
+                return KEYNAMES.get(curses.keyname(ch), ch)
+            except ValueError:
+                return ch
         if ch != "\x1b":
             return ch
-        # tmux sends Home/End/Delete in forms that the inner TERM's terminfo may not list,
-        # so curses returns them as Esc followed by the rest of the sequence.
+        # tmux sends Home/End/Delete and Option-modified keys in forms that the inner TERM's
+        # terminfo may not list, so curses returns them as Esc followed by the rest of the sequence.
         seq = ""
         self.scr.timeout(10)
         try:
-            while len(seq) < 4:
+            while len(seq) < 5:
                 try:
                     c = self.scr.get_wch()
                 except curses.error:
