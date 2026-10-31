@@ -43,7 +43,18 @@ MESSAGE_LINES = 6
 
 ESCAPE_KEYS = {"[1~": curses.KEY_HOME, "[7~": curses.KEY_HOME, "[H": curses.KEY_HOME, "OH": curses.KEY_HOME,
                "[4~": curses.KEY_END, "[8~": curses.KEY_END, "[F": curses.KEY_END, "OF": curses.KEY_END,
-               "[3~": curses.KEY_DC}
+               "[3~": curses.KEY_DC, "\x7f": "M-BS", "\b": "M-BS"}
+
+def delete_word_back(buf, pos):
+    """Deletes the word before `pos` in `buf` and returns the new cursor position."""
+    start = pos
+    while start > 0 and buf[start - 1] == " ":
+        start -= 1
+    while start > 0 and buf[start - 1] != " ":
+        start -= 1
+    del buf[start:pos]
+    return start
+
 
 CHECK_RE = re.compile(r"^\s*[-*]\s*\[([ xX])\]\s*(.*)$")
 HEADER_RE = re.compile(r"^([A-Za-z][\w-]*):\s*(.*)$")
@@ -860,14 +871,8 @@ class Board:
                 elif ch == "\x15":
                     del buf[:pos]
                     pos = 0
-                elif ch == "\x17":
-                    start_w = pos
-                    while start_w > 0 and buf[start_w - 1] == " ":
-                        start_w -= 1
-                    while start_w > 0 and buf[start_w - 1] != " ":
-                        start_w -= 1
-                    del buf[start_w:pos]
-                    pos = start_w
+                elif ch in ("\x17", "M-BS"):
+                    pos = delete_word_back(buf, pos)
                 elif isinstance(ch, str) and ch.isprintable():
                     buf.insert(pos, ch)
                     pos += 1
@@ -957,6 +962,8 @@ class Board:
                 elif ch == "\x15":
                     del line[:pos]
                     pos = 0
+                elif ch in ("\x17", "M-BS"):
+                    pos = delete_word_back(line, pos)
                 elif isinstance(ch, str) and ch.isprintable():
                     line.insert(pos, ch)
                     pos += 1
