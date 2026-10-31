@@ -45,6 +45,8 @@ Branch: `mlogan-kanban`
   state comes from the transcript.
 - getkey decodes Home/End/Delete sequences that tmux sends but the inner terminfo (xterm-256color from
   ~/.tmux.conf) does not list; before, they arrived as Esc and cancelled dialogs.
+- getkey maps Esc+DEL (Option+Backspace) to "M-BS"; edit_text and edit_lines treat it and Ctrl-W
+  as delete-word.
 
 ## Remaining
 - Not tested: a card reaching "done" through merged PRs (only `status: done` was tested), and the
