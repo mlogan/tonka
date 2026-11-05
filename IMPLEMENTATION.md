@@ -10,7 +10,7 @@ Branch: `mlogan-sccache`
   md5 of the script plus `TONKA_SCCACHE_SIZE`, stored in the VM at `~/.tonka/rust-setup.md5`.
 
 ## Done
-- Script, host hook, `TONKA_SCCACHE_SIZE` config (default 50G), README/TONKA_FOR_DUMMIES docs.
+- Script, host hook, `TONKA_SCCACHE_SIZE` config (default 200G), README/TONKA_FOR_DUMMIES docs.
 - Tested in the VM: config written, second bring-up skips setup, gc script runs, and two separate
   projects depending on serde share cache hits (6 hits on the second build); no `incremental/` dir.
 
