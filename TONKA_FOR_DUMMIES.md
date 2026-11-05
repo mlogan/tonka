@@ -74,6 +74,7 @@ TONKA_TOOLS="nodejs rust"
 | `TONKA_BASE_IMAGE` | `ghcr.io/cirruslabs/macos-tahoe-xcode:latest` | Tart image to clone for the base VM |
 | `TONKA_DOTFILES_REPO` | *(none)* | Git URL of your dotfiles repo (should have `setup.sh` at root) |
 | `TONKA_TOOLS` | *(none)* | Space-separated list: `rust`, `go`, `nodejs`, `python` |
+| `TONKA_SCCACHE_SIZE` | `50G` | Size cap of the shared sccache cache (with `rust`) |
 | `GITHUB_TOKEN` | *(auto-detected from `gh auth token`)* | GitHub token for authentication inside the VM |
 
 You can also set these as environment variables instead of putting them in `~/.tonka.conf`. The config file is simply sourced as a shell script.

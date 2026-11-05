@@ -170,7 +170,22 @@ Variables (can be set in config file or environment):
 - `TONKA_DOTFILES_REPO` - Git URL of your dotfiles repo (should have `setup.sh` at root)
 - `TONKA_DEFAULT_REPO` - Name of the repo to use when `tonka new` / `tonka pr` / `tonka build` is invoked without a repo argument. If unset and the VM has several repos, tonka asks which one to use (or errors when not run interactively)
 - `TONKA_TOOLS` - Space-separated list of tools to install: `rust`, `go`, `nodejs`, `python`
+- `TONKA_SCCACHE_SIZE` - Size cap of the shared sccache cache when `rust` is in `TONKA_TOOLS` (default: `50G`)
 - `GITHUB_TOKEN` - Passed to VM for GitHub CLI authentication (auto-detected from `gh auth token` if not set)
+
+### Rust builds
+
+With `rust` in `TONKA_TOOLS`, tonka configures cargo in the VM to compile through
+[sccache](https://github.com/mozilla/sccache) and turns off incremental compilation,
+because sccache cannot cache incremental builds. All projects share one cache in
+`~/Library/Caches/Mozilla.sccache`, so a dependency compiled in one worktree is reused in the others.
+The settings live in `~/.cargo/config.toml` and sccache's config file, so they apply to every shell.
+tonka re-applies them on VM bring-up whenever `guest/rust-setup.sh` or `TONKA_SCCACHE_SIZE` changes.
+
+Two mechanisms keep the cache bounded:
+- sccache evicts least-recently-used entries once the cache exceeds `TONKA_SCCACHE_SIZE`.
+- A daily cron job (04:30, `~/.tonka/sccache-gc.sh`) deletes the whole cache when the VM's data volume
+  is at least 85% full. It logs to `~/.tonka/sccache-gc.log`.
 
 ## Troubleshooting
 
