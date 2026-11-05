@@ -3,11 +3,11 @@
 # Idempotent; tonka runs it over ssh when the script changes.
 #
 # Environment variables:
-#   TONKA_SCCACHE_SIZE - Cache size cap, e.g. 50G (defaults to 50G)
+#   TONKA_SCCACHE_SIZE - Cache size cap, e.g. 200G (defaults to 200G)
 
 set -euo pipefail
 
-SIZE="${TONKA_SCCACHE_SIZE:-50G}"
+SIZE="${TONKA_SCCACHE_SIZE:-200G}"
 BREW=/opt/homebrew/bin/brew
 SCCACHE=/opt/homebrew/bin/sccache
 CACHE_DIR="$HOME/Library/Caches/Mozilla.sccache"

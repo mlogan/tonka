@@ -25,7 +25,7 @@ fi
 TONKA_BASE_IMAGE="${TONKA_BASE_IMAGE:-ghcr.io/cirruslabs/macos-tahoe-xcode:latest}"
 TONKA_DISK_SIZE="${TONKA_DISK_SIZE:-}"
 TONKA_TOOLS="${TONKA_TOOLS:-}"
-TONKA_SCCACHE_SIZE="${TONKA_SCCACHE_SIZE:-50G}"
+TONKA_SCCACHE_SIZE="${TONKA_SCCACHE_SIZE:-200G}"
 TONKA_CPU="${TONKA_CPU:-$(sysctl -n hw.ncpu)}"
 TONKA_MEMORY="${TONKA_MEMORY:-$(( $(sysctl -n hw.memsize) * 5 / 8 / 1024 / 1024 ))}"
 

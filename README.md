@@ -170,7 +170,7 @@ Variables (can be set in config file or environment):
 - `TONKA_DOTFILES_REPO` - Git URL of your dotfiles repo (should have `setup.sh` at root)
 - `TONKA_DEFAULT_REPO` - Name of the repo to use when `tonka new` / `tonka pr` / `tonka build` is invoked without a repo argument. If unset and the VM has several repos, tonka asks which one to use (or errors when not run interactively)
 - `TONKA_TOOLS` - Space-separated list of tools to install: `rust`, `go`, `nodejs`, `python`
-- `TONKA_SCCACHE_SIZE` - Size cap of the shared sccache cache when `rust` is in `TONKA_TOOLS` (default: `50G`)
+- `TONKA_SCCACHE_SIZE` - Size cap of the shared sccache cache when `rust` is in `TONKA_TOOLS` (default: `200G`)
 - `GITHUB_TOKEN` - Passed to VM for GitHub CLI authentication (auto-detected from `gh auth token` if not set)
 
 ### Rust builds
