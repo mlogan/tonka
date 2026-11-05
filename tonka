@@ -162,6 +162,8 @@ Commands:
   diff <project>            Sync and diff project against default branch
   difftool <project>        Sync and open difftool for project against default branch
   rm [-f] <project>...      Remove projects (worktrees) from the VM
+  kanban                    Open the Kanban board of projects (starts or resumes
+                            the board's tmux session in the VM)
   start                     Start the tonka VM
   stop                      Stop the tonka VM
   list                      List repos and projects
@@ -182,6 +184,7 @@ Examples:
   tonka cl feature-branch
   tonka cursor feature-branch
   tonka vscode feature-branch
+  tonka kanban
 EOF
 }
 
@@ -1349,6 +1352,35 @@ rm_project() {
     log_info "Project '$project_name' removed."
 }
 
+cmd_kanban() {
+    ensure_vm
+    local ip
+    ip=$(get_vm_ip "$VM_NAME")
+
+    if ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "test -x /opt/homebrew/bin/tmux"; then
+        log_info "Installing tmux in the VM..."
+        ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "/opt/homebrew/bin/brew install tmux" \
+            || die "Failed to install tmux in the VM"
+    fi
+
+    # tmux refuses to start if the VM has no terminfo entry for the host's TERM
+    # (e.g. xterm-ghostty), so copy the host's entry over.
+    if [[ -n "${TERM:-}" ]] && infocmp -x "$TERM" &>/dev/null \
+        && ! ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "infocmp '$TERM'" &>/dev/null; then
+        log_info "Installing terminfo for $TERM in the VM..."
+        infocmp -x "$TERM" | ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "tic -x -" \
+            || log_warn "Could not install terminfo for $TERM; the board will use xterm-256color"
+    fi
+
+    # Copy over (not replace) ~/.tonka/kanban: it also holds agent prompts, the PR cache, and the project queue.
+    tar -C "$SCRIPT_DIR/guest/kanban" --exclude __pycache__ -cf - . \
+        | ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
+            "mkdir -p ~/.tonka/kanban && tar -C ~/.tonka/kanban -xf -"
+
+    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
+        "\$SHELL -i -l -c '~/.tonka/kanban/start.sh'"
+}
+
 cmd_resize_disk() {
     local size="${1:-}"
     if [[ -z "$size" ]]; then
@@ -1529,6 +1561,9 @@ main() {
             ;;
         cleanup)
             cmd_cleanup
+            ;;
+        kanban)
+            cmd_kanban
             ;;
         resize-disk)
             shift

@@ -67,6 +67,9 @@ tonka list
 # Clean up merged worktrees
 tonka cleanup
 
+# Manage all projects from a Kanban board
+tonka kanban
+
 # Rebuild base VM (after config changes)
 tonka rebuild-base
 ```
@@ -97,6 +100,57 @@ Options:
 - `--repo <repo>` - repo to build in (default: `TONKA_DEFAULT_REPO`, or the only repo)
 - `--name <project>` - worktree/branch name (default: `build-<slug of prompt>`)
 - `--keep` - keep the worktree after the PR is created
+
+## The Kanban board
+
+`tonka kanban` opens a Kanban board with one card per project in the VM's
+`~/projects` directory:
+
+```bash
+tonka kanban
+```
+
+The board runs in a tmux session inside the VM. Running `tonka kanban` again
+reattaches to it, so agents keep running after you disconnect. Each card shows
+the project's repo and branch, a short checklist, a message about the current
+work, and links to its PRs.
+
+Columns:
+- **Needs input**: Claude has finished its turn or asked a question. Completed
+  projects (every PR merged) also appear here; Enter offers to delete them.
+- **Working**: Claude is in the middle of a turn.
+- **In review**: the project has an open PR, and Claude is not working or waiting for you.
+- **Idle**: no Claude is running and the project has no open PR.
+
+The board also places Claude sessions that you started outside it (for
+example with `tonka cl`). It finds them by their working directory and reads
+the end of their transcript to tell whether Claude is working or waiting.
+Enter does not open a second session for such a project; switch to its terminal.
+
+Keys:
+- Arrow keys (or `hjkl`) move between cards.
+- Enter opens the project's Claude session in its own tmux window. It resumes
+  the most recent conversation, or starts one if there is none.
+- `Ctrl-\` returns to the board from any window.
+- `n` creates a project. Describe the task; Claude picks the repo and the
+  worktree/branch name, and you confirm or edit them. Claude then starts on the
+  task in the new worktree.
+- `a` queues projects for later. Type one short note per line and press Enter
+  on an empty line to save them. The notes appear in a **Queue** column on the
+  right. Enter on a note opens the `n` flow with the note as the starting text,
+  and the note leaves the queue once you confirm the project.
+- `d` deletes the selected project (worktree and local branch), or removes the
+  selected note from the queue.
+- `r` refreshes PR states, `R` reloads the board, `q` detaches.
+
+Claude learns about the board from a plugin that tonka loads into every session
+the board starts. The plugin's `tonka-kanban` skill tells Claude to keep
+`.tonka/status.md` in the worktree up to date, and its hooks record whether
+Claude is working or waiting for you. Tonka adds `.tonka/` to each repo's
+`.git/info/exclude`, so these files never show up in `git status`.
+
+Set `TONKA_KANBAN_MODEL` in the VM to change the model that picks the repo and
+name for new projects (default: `sonnet`).
 
 ## How It Works
 
