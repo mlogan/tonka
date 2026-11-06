@@ -29,7 +29,7 @@ TONKA_MEMORY="${TONKA_MEMORY:-$(( $(sysctl -n hw.memsize) * 5 / 8 / 1024 / 1024 
 
 # Verify gh is authenticated on the host before proceeding
 if command -v gh &>/dev/null; then
-    if ! gh auth status &>/dev/null; then
+    if ! gh auth status --active &>/dev/null; then
         echo "Error: gh is not authenticated. Run 'gh auth login' first." >&2
         exit 1
     fi
