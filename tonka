@@ -125,40 +125,6 @@ get_default_branch_ssh() {
     echo "$branch"
 }
 
-# Build the remote command that launches Claude in $1 ($HOME-relative
-# expressions are fine; they are expanded by the remote shell).
-# ~/.claude.env is sourced with `set -a` so plain KEY=value lines are exported
-# to Claude too, not just `export`-prefixed ones.
-claude_remote_cmd() {
-    local dir="$1"
-    echo "cd \"$dir\" && \$SHELL -i -l -c 'if [ -f ~/.claude.env ]; then set -a; . ~/.claude.env; set +a; fi; ~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec \$SHELL -l'"
-}
-
-# Make ~/.claude.env apply to every shell in the VM, not just the Claude launch
-# command: plain `tonka sh` sessions, VS Code/Cursor remote terminals, and cron
-# jobs all go through the shell rc files. zsh reads .zshenv for every
-# invocation, interactive or not.
-ensure_claude_env_sourced() {
-    local ip="$1"
-    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$SSH_KEY" "$TART_USER@$ip" '
-        snippet="# tonka: load ~/.claude.env
-if [ -f \"\$HOME/.claude.env\" ]; then set -a; . \"\$HOME/.claude.env\"; set +a; fi"
-        for f in ~/.zshenv ~/.bash_profile; do
-            # Only create .zshenv; other rc files are appended to if present.
-            [ -f "$f" ] || [ "$f" = "$HOME/.zshenv" ] || continue
-            grep -q "tonka: load ~/.claude.env" "$f" 2>/dev/null && continue
-            printf "\n%s\n" "$snippet" >> "$f"
-        done
-    ' 2>/dev/null || true
-}
-
-# True if the VM has a long-lived Claude token in ~/.claude.env.
-vm_has_oauth_token() {
-    local ip="$1"
-    ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-        "grep -qE '^[[:space:]]*(export[[:space:]]+)?CLAUDE_CODE_OAUTH_TOKEN=' ~/.claude.env 2>/dev/null"
-}
-
 ssh_failure_hint() {
     local ip="$1"
     # If even ping fails, the host can't reach the VM at all.
@@ -193,8 +159,6 @@ Commands:
   sync                      Fetch branches from VM repo to current local repo
   sh [project]              SSH into VM (optionally into a project)
   cl <project>              Run Claude in a project
-  setup-token [token]       Install a long-lived Claude token in the VM
-                            (runs 'claude setup-token' if no token is given)
   cursor [project]          Open project in Cursor/VS Code via SSH (prompts if omitted)
   vscode [project]          Open project in VS Code/Cursor via SSH (prompts if omitted)
   diff <project>            Sync and diff project against default branch
@@ -503,22 +467,16 @@ sync_claude_settings() {
         fi
     fi
 
-    ensure_claude_env_sourced "$ip"
-
-    # Sync credentials from Keychain if changed. Skipped when the VM has its own
-    # long-lived token: sharing one set of OAuth credentials between host and VM
-    # makes the two fight over refreshes.
-    if ! vm_has_oauth_token "$ip"; then
-        local creds
-        creds=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || echo "")
-        if [[ -n "$creds" ]]; then
-            local local_hash remote_hash
-            local_hash=$(echo "$creds" | md5 -q)
-            remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q ~/.claude/.credentials.json 2>/dev/null" || echo "")
-            if [[ "$local_hash" != "$remote_hash" ]]; then
-                ssh $ssh_opts "$TART_USER@$ip" "echo '$creds' > ~/.claude/.credentials.json"
-                changed=true
-            fi
+    # Sync credentials from Keychain if changed
+    local creds
+    creds=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || echo "")
+    if [[ -n "$creds" ]]; then
+        local local_hash remote_hash
+        local_hash=$(echo "$creds" | md5 -q)
+        remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "md5 -q ~/.claude/.credentials.json 2>/dev/null" || echo "")
+        if [[ "$local_hash" != "$remote_hash" ]]; then
+            ssh $ssh_opts "$TART_USER@$ip" "echo '$creds' > ~/.claude/.credentials.json"
+            changed=true
         fi
     fi
 
@@ -807,7 +765,7 @@ cmd_new() {
 
     log_info "Starting Claude in $project_name..."
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
-        "$(claude_remote_cmd "\$HOME/projects/$project_name")"
+        "cd ~/projects/$project_name && \$SHELL -i -l -c '[ -f ~/.claude.env ] && . ~/.claude.env; ~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec \$SHELL -l'"
 }
 
 # Turn free text into a branch/directory name: lowercase, first five words,
@@ -1044,7 +1002,7 @@ cmd_pr() {
     if [[ -n "$worktree_path" ]]; then
         log_info "Found existing project at $worktree_path. Starting Claude..."
         ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
-            "$(claude_remote_cmd "$worktree_path")"
+            "cd '$worktree_path' && \$SHELL -i -l -c '[ -f ~/.claude.env ] && . ~/.claude.env; ~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec \$SHELL -l'"
         return
     fi
 
@@ -1059,7 +1017,7 @@ cmd_pr() {
 
     log_info "Starting Claude in $branch_name..."
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
-        "$(claude_remote_cmd "\$HOME/projects/$branch_name")"
+        "cd ~/projects/$branch_name && \$SHELL -i -l -c '[ -f ~/.claude.env ] && . ~/.claude.env; ~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec \$SHELL -l'"
 }
 
 cmd_cp() {
@@ -1217,74 +1175,7 @@ cmd_cl() {
 
     log_info "Starting Claude in $project_name..."
     ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
-        "$(claude_remote_cmd "\$HOME/projects/$project_name")"
-}
-
-# Write CLAUDE_CODE_OAUTH_TOKEN into the VM's ~/.claude.env, replacing any
-# previous value. Written via stdin so the token never lands in the process
-# table or the local shell history.
-install_oauth_token() {
-    local ip="$1"
-    local token="$2"
-    printf '%s' "$token" | ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" '
-        umask 077
-        token=$(cat)
-        touch ~/.claude.env
-        grep -vE "^[[:space:]]*(export[[:space:]]+)?CLAUDE_CODE_OAUTH_TOKEN=" ~/.claude.env > ~/.claude.env.tmp || true
-        printf "export CLAUDE_CODE_OAUTH_TOKEN=%s\n" "$token" >> ~/.claude.env.tmp
-        mv ~/.claude.env.tmp ~/.claude.env
-        chmod 600 ~/.claude.env
-    '
-}
-
-cmd_setup_token() {
-    local token="${1:-}"
-
-    ensure_vm
-    local ip
-    ip=$(get_vm_ip "$VM_NAME")
-
-    if [[ -z "$token" ]]; then
-        if command -v claude &>/dev/null; then
-            log_info "Running 'claude setup-token' on the host (a browser will open)..."
-            claude setup-token || log_warn "'claude setup-token' exited non-zero."
-        else
-            log_info "No claude CLI on the host; running 'claude setup-token' in the VM..."
-            ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" -t "$TART_USER@$ip" \
-                "\$SHELL -i -l -c '~/.local/bin/claude setup-token'" || log_warn "'claude setup-token' exited non-zero."
-        fi
-        echo
-        read -r -s -p "Paste the token (input hidden): " token
-        echo
-    fi
-
-    # Strip whitespace a paste may carry along.
-    token="${token//[$' \t\r\n']/}"
-    [[ -n "$token" ]] || die "No token provided."
-    if [[ "$token" != sk-ant-* ]]; then
-        log_warn "Token does not start with 'sk-ant-'; installing it anyway."
-    fi
-
-    log_info "Installing token into VM:~/.claude.env..."
-    install_oauth_token "$ip" "$token"
-
-    # Drop the keychain credentials synced from the host: with a token in place
-    # they are unused by Claude, and leaving them lets anything that misses the
-    # env var authenticate as the host account instead.
-    if ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "test -f ~/.claude/.credentials.json"; then
-        ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" "rm -f ~/.claude/.credentials.json"
-        log_info "Removed host credentials synced to VM:~/.claude/.credentials.json"
-    fi
-
-    local status
-    status=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" "$TART_USER@$ip" \
-        "\$SHELL -l -c '~/.local/bin/claude auth status'" 2>/dev/null || echo "")
-    if echo "$status" | grep -q 'oauth_token'; then
-        log_info "VM Claude now authenticates with the long-lived token."
-    else
-        log_warn "Unexpected auth status in VM:"
-        echo "$status"
-    fi
+        "cd ~/projects/$project_name && \$SHELL -i -l -c '[ -f ~/.claude.env ] && . ~/.claude.env; ~/.local/bin/claude --dangerously-skip-permissions; echo \"Claude exited. You are still in the tonka VM. Press Ctrl-D to leave.\"; exec \$SHELL -l'"
 }
 
 # Prompt the user to pick a project from the VM. Prints the chosen project
@@ -1680,10 +1571,6 @@ main() {
         cl)
             shift
             cmd_cl "$@"
-            ;;
-        setup-token)
-            shift
-            cmd_setup_token "$@"
             ;;
         cursor)
             shift

@@ -54,9 +54,6 @@ tonka build "Add a --json flag to the status command"
 tonka
 tonka cl my-feature
 
-# Give the VM its own long-lived Claude token
-tonka setup-token
-
 # SSH into a project
 tonka sh my-feature
 
@@ -160,29 +157,6 @@ name for new projects (default: `sonnet`).
 1. **Base VM**: Created once with your dotfiles, tools, and Claude CLI installed
 2. **Tonka VM**: Cloned from base, contains your repos and project worktrees
 3. **Git Auth**: Uses `gh` CLI credential helper (synced from host)
-
-## Claude Authentication
-
-By default the host's Claude credentials are copied from the Keychain into the VM
-on every bring-up. Host and VM then share one set of OAuth credentials and refresh
-them independently, which can invalidate each other.
-
-`tonka setup-token` avoids that by giving the VM its own long-lived token
-(requires a Claude subscription):
-
-```bash
-tonka setup-token           # runs `claude setup-token` and prompts for the result
-tonka setup-token <token>   # or install a token you already have
-```
-
-The token is written to `~/.claude.env` in the VM as
-`export CLAUDE_CODE_OAUTH_TOKEN=...` (mode 600), the Keychain credentials synced
-from the host are removed, and further credential syncs are skipped while the
-token is in place.
-
-`~/.claude.env` is sourced from the VM's `~/.zshenv`, so anything you put there
-applies to every shell in the VM — `tonka cl`, `tonka sh`, VS Code/Cursor remote
-terminals, and cron jobs alike. Lines may be written with or without `export`.
 
 ## Configuration
 
