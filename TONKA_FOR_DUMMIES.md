@@ -212,6 +212,26 @@ disconnect, and `tonka kanban` picks up where you left off.
 - When all of a project's PRs are merged, its card moves to **Needs input** and
   Enter offers to delete the project.
 
+### Giving the VM its own Claude login
+
+By default the VM uses a copy of your host's Claude credentials. Host and VM then
+refresh the same OAuth credentials independently and can log each other out. If
+that bites you, give the VM a long-lived token of its own (needs a Claude
+subscription):
+
+```bash
+tonka setup-token
+```
+
+This runs `claude setup-token` (on the host if the CLI is installed there,
+otherwise inside the VM), asks you to paste the token it prints, and writes it to
+`~/.claude.env` in the VM. Already have a token? Pass it directly:
+`tonka setup-token sk-ant-oat01-...`.
+
+`~/.claude.env` is sourced by every shell in the VM, so anything else you want
+Claude to see (`ANTHROPIC_...` settings, proxy vars, etc.) can go in that file
+too, with or without `export`.
+
 ---
 
 ## 8. Day-to-Day Commands
@@ -220,6 +240,7 @@ disconnect, and `tonka kanban` picks up where you left off.
 |---|---|
 | `tonka` | Launch Claude in a project (prompts to select if multiple) |
 | `tonka cl <project>` | Launch Claude in a specific project |
+| `tonka setup-token [token]` | Give the VM its own long-lived Claude token |
 | `tonka sh [project]` | SSH into the VM (optionally into a project directory) |
 | `tonka new <project> [repo]` | Create a new worktree + launch Claude |
 | `tonka build <prompt>` | Unattended: new worktree, headless Claude, PR, then remove the worktree |
