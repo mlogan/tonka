@@ -25,7 +25,7 @@ fi
 TONKA_BASE_IMAGE="${TONKA_BASE_IMAGE:-ghcr.io/cirruslabs/macos-tahoe-xcode:latest}"
 TONKA_DISK_SIZE="${TONKA_DISK_SIZE:-}"
 TONKA_TOOLS="${TONKA_TOOLS:-}"
-TONKA_SCCACHE_SIZE="${TONKA_SCCACHE_SIZE:-200G}"
+TONKA_KACHE_SIZE="${TONKA_KACHE_SIZE:-200G}"
 TONKA_CPU="${TONKA_CPU:-$(sysctl -n hw.ncpu)}"
 TONKA_MEMORY="${TONKA_MEMORY:-$(( $(sysctl -n hw.memsize) * 5 / 8 / 1024 / 1024 ))}"
 
@@ -356,12 +356,12 @@ setup_rust() {
     local ssh_opts="-o StrictHostKeyChecking=no -i $SSH_KEY"
     local script="$SCRIPT_DIR/guest/rust-setup.sh"
     local local_hash remote_hash
-    local_hash=$({ cat "$script"; echo "$TONKA_SCCACHE_SIZE"; } | md5 -q)
+    local_hash=$({ cat "$script"; echo "$TONKA_KACHE_SIZE"; } | md5 -q)
     remote_hash=$(ssh $ssh_opts "$TART_USER@$ip" "cat ~/.tonka/rust-setup.md5 2>/dev/null" || echo "")
     [[ "$local_hash" == "$remote_hash" ]] && return 0
 
-    log_info "Configuring Rust (sccache) in the VM..."
-    if ssh $ssh_opts "$TART_USER@$ip" "TONKA_SCCACHE_SIZE='$TONKA_SCCACHE_SIZE' bash -s" < "$script"; then
+    log_info "Configuring Rust (kache) in the VM..."
+    if ssh $ssh_opts "$TART_USER@$ip" "TONKA_KACHE_SIZE='$TONKA_KACHE_SIZE' bash -s" < "$script"; then
         ssh $ssh_opts "$TART_USER@$ip" "echo '$local_hash' > ~/.tonka/rust-setup.md5"
     else
         log_warn "Rust setup failed in the VM; it will retry on the next run"
