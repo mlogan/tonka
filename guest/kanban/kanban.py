@@ -33,6 +33,7 @@ MODEL = os.environ.get("TONKA_KANBAN_MODEL", "sonnet")
 PR_POLL_SECONDS = 180  # one gh call per project per poll; keep well under the API rate limit
 SCAN_SECONDS = 1.0
 PROCESS_SCAN_SECONDS = 5.0
+DISK_SECONDS = 30.0
 # A mid-turn transcript that has not changed for this long is probably blocked on the user.
 STALE_TURN_SECONDS = 30 * 60
 
@@ -98,6 +99,13 @@ TMUX = tool("tmux")
 
 def tmux(*args):
     return run([TMUX, *args], timeout=10)
+
+
+def disk_usage():
+    """Returns df's Capacity for the filesystem holding HOME (e.g. "42%"), or "?"."""
+    lines = run(["df", "-P", HOME], timeout=5).stdout.splitlines()
+    fields = lines[-1].split() if len(lines) >= 2 else []
+    return fields[4] if len(fields) >= 5 and fields[4].endswith("%") else "?"
 
 
 def read_file(path):
@@ -528,6 +536,7 @@ class Board:
         self.waiting_shown = None
         self.session = tmux("display-message", "-p", "#S").stdout.strip() if os.environ.get("TMUX") else ""
         self.last_process_scan = 0
+        self.disk, self.last_disk = "?", 0
         try:
             with open(PR_CACHE) as f:
                 self.pr_cache = json.load(f)
@@ -724,9 +733,10 @@ class Board:
         self.fix_selection(cols)
 
         self.put(0, 0, " tonka kanban", a["bold"])
+        self.put(0, 14, f"disk {self.disk}", a["dim"])
         help_text = ("←↑↓→ move  ⏎ open  n new  a queue notes  d delete  r refresh PRs  R reload  q detach"
                      "  │  Ctrl-\\ returns here")
-        self.put(0, max(14, w - disp_width(help_text) - 1), help_text, a["dim"])
+        self.put(0, max(25, w - disp_width(help_text) - 1), help_text, a["dim"])
 
         ncol = len(COLUMNS) if self.queue else len(COLUMNS) - 1
         colw = max(12, (w - (ncol - 1)) // ncol)
@@ -790,6 +800,8 @@ class Board:
     def tick(self):
         if time.time() - self.last_scan >= SCAN_SECONDS:
             self.scan()
+        if time.time() - self.last_disk >= DISK_SECONDS:
+            self.disk, self.last_disk = disk_usage(), time.time()
         self.draw()
 
     # --- dialogs -----------------------------------------------------------
